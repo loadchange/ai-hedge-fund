@@ -8,6 +8,7 @@ from colorama import Fore, Style
 from src.utils.analysts import ANALYST_ORDER
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider, find_model_by_name
 from src.utils.ollama import ensure_ollama_and_model
+from src.i18n import set_lang, get_text
 
 from dataclasses import dataclass
 from typing import Optional
@@ -41,6 +42,7 @@ def add_common_args(
     if include_ollama:
         parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
     parser.add_argument("--model", type=str, required=False, help="Model name to use (e.g., gpt-4o)")
+    parser.add_argument("--lang", type=str, default="en", choices=["en", "zhCN"], help="Language for output (en, zhCN)")
     return parser
 
 
@@ -78,7 +80,7 @@ def select_analysts(flags: dict | None = None) -> list[str]:
         return [a.strip() for a in flags["analysts"].split(",") if a.strip()]
 
     choices = questionary.checkbox(
-        "Select your AI analysts.",
+        get_text("select_analysts"),
         choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
         instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done.",
         validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
@@ -93,11 +95,11 @@ def select_analysts(flags: dict | None = None) -> list[str]:
     ).ask()
 
     if not choices:
-        print("\n\nInterrupt received. Exiting...")
+        print(f"\n\n{get_text('interrupt_exiting')}")
         sys.exit(0)
 
     print(
-        f"\nSelected analysts: {', '.join(Fore.GREEN + c.title().replace('_', ' ') + Style.RESET_ALL for c in choices)}\n"
+        f"\n{get_text('selected_analysts')} {', '.join(Fore.GREEN + c.title().replace('_', ' ') + Style.RESET_ALL for c in choices)}\n"
     )
     return choices
 
@@ -110,16 +112,16 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         model = find_model_by_name(model_flag)
         if model:
             print(
-                f"\nUsing specified model: {Fore.CYAN}{model.provider.value}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model.model_name}{Style.RESET_ALL}\n"
+                f"\n{get_text('using_model')} {Fore.CYAN}{model.provider.value}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model.model_name}{Style.RESET_ALL}\n"
             )
             return model.model_name, model.provider.value
         else:
-            print(f"{Fore.RED}Model '{model_flag}' not found. Please select a model.{Style.RESET_ALL}")
+            print(f"{Fore.RED}{get_text('model_not_found', model_flag)}{Style.RESET_ALL}")
 
     if use_ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{get_text('using_ollama')}{Style.RESET_ALL}")
         model_name = questionary.select(
-            "Select your Ollama model:",
+            get_text("select_ollama_model"),
             choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
             style=questionary.Style(
                 [
@@ -132,13 +134,13 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         ).ask()
 
         if not model_name:
-            print("\n\nInterrupt received. Exiting...")
+            print(f"\n\n{get_text('interrupt_exiting')}")
             sys.exit(0)
 
         if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
+            model_name = questionary.text(get_text("custom_model_prompt")).ask()
             if not model_name:
-                print("\n\nInterrupt received. Exiting...")
+                print(f"\n\n{get_text('interrupt_exiting')}")
                 sys.exit(0)
 
         if not ensure_ollama_and_model(model_name):
@@ -147,11 +149,11 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
 
         model_provider = ModelProvider.OLLAMA.value
         print(
-            f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
+            f"\n{get_text('selected_ollama_model')} {Fore.CYAN}Ollama{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
         )
     else:
         model_choice = questionary.select(
-            "Select your LLM model:",
+            get_text("select_model"),
             choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
             style=questionary.Style(
                 [
@@ -164,25 +166,25 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
         ).ask()
 
         if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
+            print(f"\n\n{get_text('interrupt_exiting')}")
             sys.exit(0)
 
         model_name, model_provider = model_choice
 
         model_info = get_model_info(model_name, model_provider)
         if model_info and model_info.is_custom():
-            model_name = questionary.text("Enter the custom model name:").ask()
+            model_name = questionary.text(get_text("custom_model_prompt")).ask()
             if not model_name:
-                print("\n\nInterrupt received. Exiting...")
+                print(f"\n\n{get_text('interrupt_exiting')}")
                 sys.exit(0)
 
         if model_info:
             print(
-                f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
+                f"\n{get_text('selected_model')} {Fore.CYAN}{model_provider}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n"
             )
         else:
             model_provider = "Unknown"
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+            print(f"\n{get_text('selected_model')} {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     return model_name, model_provider or ""
 
@@ -221,6 +223,7 @@ class CLIInputs:
     margin_requirement: float
     show_reasoning: bool = False
     show_agent_graph: bool = False
+    lang: str = "en"
     raw_args: Optional[argparse.Namespace] = None
 
 
@@ -262,6 +265,9 @@ def parse_cli_inputs(
 
     args = parser.parse_args()
 
+    # Set language early so interactive prompts use it
+    set_lang(getattr(args, "lang", "en"))
+
     # Normalize parsed values
     tickers = parse_tickers(getattr(args, "tickers", None))
     selected_analysts = select_analysts({
@@ -282,6 +288,7 @@ def parse_cli_inputs(
         margin_requirement=getattr(args, "margin_requirement", 0.0),
         show_reasoning=getattr(args, "show_reasoning", False),
         show_agent_graph=getattr(args, "show_agent_graph", False),
+        lang=getattr(args, "lang", "en"),
         raw_args=args,
     )
 

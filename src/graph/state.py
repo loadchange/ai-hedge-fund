@@ -38,12 +38,12 @@ def show_agent_reasoning(output, agent_name):
     if isinstance(output, (dict, list)):
         # Convert the output to JSON-serializable format
         serializable_output = convert_to_serializable(output)
-        print(json.dumps(serializable_output, indent=2))
+        print(json.dumps(serializable_output, indent=2, ensure_ascii=False))
     else:
         try:
             # Parse the string as JSON and pretty print it
             parsed_output = json.loads(output)
-            print(json.dumps(parsed_output, indent=2))
+            print(json.dumps(parsed_output, indent=2, ensure_ascii=False))
         except json.JSONDecodeError:
             # Fallback to original string if not valid JSON
             print(output)

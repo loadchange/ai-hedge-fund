@@ -1,12 +1,31 @@
 from datetime import datetime, timezone
+import unicodedata
 from rich.console import Console
 from rich.live import Live
-from rich.table import Table
-from rich.style import Style
 from rich.text import Text
 from typing import Dict, Optional, Callable, List
+from src.i18n import get_text, translate_agent_name, translate_status
 
 console = Console()
+
+
+def _display_width(s: str) -> int:
+    """Return the terminal display width of a string, accounting for CJK characters."""
+    width = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ("W", "F"):
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def _pad(s: str, width: int) -> str:
+    """Pad string with spaces to reach the target display width."""
+    current = _display_width(s)
+    if current >= width:
+        return s
+    return s + " " * (width - current)
 
 
 class AgentProgress:
@@ -14,15 +33,15 @@ class AgentProgress:
 
     def __init__(self):
         self.agent_status: Dict[str, Dict[str, str]] = {}
-        self.table = Table(show_header=False, box=None, padding=(0, 1))
-        self.live = Live(self.table, console=console, refresh_per_second=4)
+        self._renderable = Text("")
+        self.live = Live(self._renderable, console=console, refresh_per_second=4, transient=True)
         self.started = False
         self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
 
     def register_handler(self, handler: Callable[[str, Optional[str], str], None]):
         """Register a handler to be called when agent status updates."""
         self.update_handlers.append(handler)
-        return handler  # Return handler to support use as decorator
+        return handler
 
     def unregister_handler(self, handler: Callable[[str, Optional[str], str], None]):
         """Unregister a previously registered handler."""
@@ -52,12 +71,10 @@ class AgentProgress:
             self.agent_status[agent_name]["status"] = status
         if analysis:
             self.agent_status[agent_name]["analysis"] = analysis
-        
-        # Set the timestamp as UTC datetime
+
         timestamp = datetime.now(timezone.utc).isoformat()
         self.agent_status[agent_name]["timestamp"] = timestamp
 
-        # Notify all registered handlers
         for handler in self.update_handlers:
             handler(agent_name, ticker, status, analysis, timestamp)
 
@@ -65,18 +82,23 @@ class AgentProgress:
 
     def get_all_status(self):
         """Get the current status of all agents as a dictionary."""
-        return {agent_name: {"ticker": info["ticker"], "status": info["status"], "display_name": self._get_display_name(agent_name)} for agent_name, info in self.agent_status.items()}
+        return {
+            agent_name: {
+                "ticker": info["ticker"],
+                "status": info["status"],
+                "display_name": self._get_display_name(agent_name),
+            }
+            for agent_name, info in self.agent_status.items()
+        }
 
     def _get_display_name(self, agent_name: str) -> str:
         """Convert agent_name to a display-friendly format."""
-        return agent_name.replace("_agent", "").replace("_", " ").title()
+        name = agent_name.replace("_agent", "").replace("_", " ").title()
+        return translate_agent_name(name)
 
     def _refresh_display(self):
-        """Refresh the progress display."""
-        self.table.columns.clear()
-        self.table.add_column(width=100)
+        """Refresh the progress display as aligned text lines."""
 
-        # Sort agents with Risk Management and Portfolio Management at the bottom
         def sort_key(item):
             agent_name = item[0]
             if "risk_management" in agent_name:
@@ -86,30 +108,51 @@ class AgentProgress:
             else:
                 return (1, agent_name)
 
-        for agent_name, info in sorted(self.agent_status.items(), key=sort_key):
+        # Pre-compute column widths
+        names = []
+        tickers = []
+        for agent_name, info in self.agent_status.items():
+            names.append(self._get_display_name(agent_name))
+            tickers.append(f"[{info['ticker']}]" if info.get("ticker") else "")
+        name_width = max((_display_width(n) for n in names), default=16)
+        name_width = max(name_width, 16)
+        ticker_width = max((_display_width(t) for t in tickers), default=8)
+        ticker_width = max(ticker_width, 8)
+
+        output = Text()
+        for i, (agent_name, info) in enumerate(
+            sorted(self.agent_status.items(), key=sort_key)
+        ):
             status = info["status"]
-            ticker = info["ticker"]
-            # Create the status text with appropriate styling
+            ticker = info.get("ticker")
+            display_name = self._get_display_name(agent_name)
+            ticker_str = f"[{ticker}]" if ticker else ""
+
             if status.lower() == "done":
-                style = Style(color="green", bold=True)
-                symbol = "✓"
+                symbol = Text(" ✓ ", style="green bold")
+                name_text = Text(_pad(display_name, name_width), style="bold")
+                ticker_text = Text(_pad(ticker_str, ticker_width), style="cyan")
+                status_text = Text(get_text("done"), style="green bold")
             elif status.lower() == "error":
-                style = Style(color="red", bold=True)
-                symbol = "✗"
+                symbol = Text(" ✗ ", style="red bold")
+                name_text = Text(_pad(display_name, name_width), style="bold")
+                ticker_text = Text(_pad(ticker_str, ticker_width), style="cyan")
+                status_text = Text(get_text("error"), style="red bold")
             else:
-                style = Style(color="yellow")
-                symbol = "⋯"
+                symbol = Text(" ⋯ ", style="yellow")
+                name_text = Text(_pad(display_name, name_width), style="bold")
+                ticker_text = Text(_pad(ticker_str, ticker_width), style="cyan")
+                status_text = Text(translate_status(status), style="yellow")
 
-            agent_display = self._get_display_name(agent_name)
-            status_text = Text()
-            status_text.append(f"{symbol} ", style=style)
-            status_text.append(f"{agent_display:<20}", style=Style(bold=True))
+            output.append_text(symbol)
+            output.append_text(name_text)
+            output.append_text(ticker_text)
+            output.append_text(status_text)
+            if i < len(self.agent_status) - 1:
+                output.append("\n")
 
-            if ticker:
-                status_text.append(f"[{ticker}] ", style=Style(color="cyan"))
-            status_text.append(status, style=style)
-
-            self.table.add_row(status_text)
+        self._renderable = output
+        self.live.update(output)
 
 
 # Create a global instance

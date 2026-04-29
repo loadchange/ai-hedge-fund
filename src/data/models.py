@@ -8,6 +8,7 @@ class Price(BaseModel):
     low: float
     volume: int
     time: str
+    source: str | None = None
 
 
 class PriceResponse(BaseModel):
@@ -59,6 +60,7 @@ class FinancialMetrics(BaseModel):
     earnings_per_share: float | None
     book_value_per_share: float | None
     free_cash_flow_per_share: float | None
+    source: str | None = None
 
 
 class FinancialMetricsResponse(BaseModel):

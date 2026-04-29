@@ -8,34 +8,35 @@ from src.backtesting.types import PerformanceMetrics
 from src.cli.input import (
     parse_cli_inputs,
 )
+from src.i18n import get_text
 
 
 def run_backtest(backtester: BacktestEngine) -> PerformanceMetrics | None:
     """Run the backtest with graceful KeyboardInterrupt handling."""
     try:
         performance_metrics = backtester.run_backtest()
-        print(f"\n{Fore.GREEN}Backtest completed successfully!{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}{get_text('backtest_completed')}{Style.RESET_ALL}")
         return performance_metrics
     except KeyboardInterrupt:
-        print(f"\n\n{Fore.YELLOW}Backtest interrupted by user.{Style.RESET_ALL}")
-        
+        print(f"\n\n{Fore.YELLOW}{get_text('backtest_interrupted')}{Style.RESET_ALL}")
+
         # Try to show any partial results that were computed
         try:
             portfolio_values = backtester.get_portfolio_values()
             if len(portfolio_values) > 1:
-                print(f"{Fore.GREEN}Partial results available.{Style.RESET_ALL}")
-                
+                print(f"{Fore.GREEN}{get_text('partial_results')}{Style.RESET_ALL}")
+
                 # Show basic summary from the available portfolio values
                 first_value = portfolio_values[0]["Portfolio Value"]
                 last_value = portfolio_values[-1]["Portfolio Value"]
                 total_return = ((last_value - first_value) / first_value) * 100
-                
-                print(f"{Fore.CYAN}Initial Portfolio Value: ${first_value:,.2f}{Style.RESET_ALL}")
-                print(f"{Fore.CYAN}Final Portfolio Value: ${last_value:,.2f}{Style.RESET_ALL}")
-                print(f"{Fore.CYAN}Total Return: {total_return:+.2f}%{Style.RESET_ALL}")
+
+                print(f"{Fore.CYAN}{get_text('initial_value')}: ${first_value:,.2f}{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}{get_text('final_value')}: ${last_value:,.2f}{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}{get_text('total_return')}: {total_return:+.2f}%{Style.RESET_ALL}")
         except Exception as e:
-            print(f"{Fore.RED}Could not generate partial results: {str(e)}{Style.RESET_ALL}")
-        
+            print(f"{Fore.RED}{get_text('could_not_generate', str(e))}{Style.RESET_ALL}")
+
         sys.exit(0)
 
 

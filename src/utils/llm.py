@@ -2,9 +2,11 @@
 
 import json
 from pydantic import BaseModel
+from langchain_core.messages import SystemMessage
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
 from src.graph.state import AgentState
+from src.i18n import get_lang_instruction
 
 
 def call_llm(
@@ -55,6 +57,17 @@ def call_llm(
             method="json_mode",
         )
 
+    # Inject language instruction into the system message
+    lang_instruction = get_lang_instruction()
+    if lang_instruction and hasattr(prompt, 'messages'):
+        messages = list(prompt.messages)
+        for i, msg in enumerate(messages):
+            if isinstance(msg, SystemMessage):
+                messages[i] = SystemMessage(content=msg.content + lang_instruction)
+                break
+        from langchain_core.prompt_values import ChatPromptValue
+        prompt = ChatPromptValue(messages=messages)
+
     # Call the LLM with retries
     for attempt in range(max_retries):
         try:
@@ -65,9 +78,11 @@ def call_llm(
             if model_info and not model_info.has_json_mode():
                 parsed_result = extract_json_from_response(result.content)
                 if parsed_result:
-                    return pydantic_model(**parsed_result)
-            else:
-                return result
+                    result = pydantic_model(**parsed_result)
+
+            # Post-process: convert any JSON dict reasoning fields to natural language
+            _sanitize_reasoning_fields(result)
+            return result
 
         except Exception as e:
             if agent_name:
@@ -157,6 +172,36 @@ def extract_json_from_response(content: str) -> dict | None:
     except Exception as e:
         print(f"Error extracting JSON from response: {e}")
     return None
+
+
+def _sanitize_reasoning_fields(obj):
+    """Walk a Pydantic model (or dict) and convert any JSON-dict reasoning to plain text."""
+    from src.i18n import summarize_json_reasoning
+
+    if isinstance(obj, BaseModel):
+        for field_name in obj.model_fields:
+            val = getattr(obj, field_name, None)
+            if field_name == "reasoning":
+                if isinstance(val, dict):
+                    setattr(obj, field_name, summarize_json_reasoning(val))
+                elif isinstance(val, str):
+                    stripped = val.strip()
+                    if stripped and stripped[0] in ("{", "["):
+                        setattr(obj, field_name, summarize_json_reasoning(stripped))
+            elif isinstance(val, BaseModel):
+                _sanitize_reasoning_fields(val)
+            elif isinstance(val, dict):
+                for v in val.values():
+                    if isinstance(v, BaseModel):
+                        _sanitize_reasoning_fields(v)
+    elif isinstance(obj, dict):
+        for key, val in obj.items():
+            if key == "reasoning" and isinstance(val, (dict, list)):
+                obj[key] = summarize_json_reasoning(val)
+            elif isinstance(val, BaseModel):
+                _sanitize_reasoning_fields(val)
+            elif isinstance(val, dict):
+                _sanitize_reasoning_fields(val)
 
 
 def get_agent_model_config(state, agent_name):
