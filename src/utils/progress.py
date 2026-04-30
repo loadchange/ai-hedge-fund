@@ -34,7 +34,17 @@ class AgentProgress:
     def __init__(self):
         self.agent_status: Dict[str, Dict[str, str]] = {}
         self._renderable = Text("")
-        self.live = Live(self._renderable, console=console, refresh_per_second=4, transient=True)
+        # redirect_stdout/stderr=False avoids rich's FileProxy, which leaks a
+        # reference past Live.stop() and triggers `ImportError: sys.meta_path
+        # is None` on interpreter shutdown when its __del__ tries to flush.
+        self.live = Live(
+            self._renderable,
+            console=console,
+            refresh_per_second=4,
+            transient=True,
+            redirect_stdout=False,
+            redirect_stderr=False,
+        )
         self.started = False
         self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
 

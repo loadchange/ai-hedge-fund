@@ -30,7 +30,12 @@ class FinancialDatasetsSource(DataSource):
 
     def _request(self, url: str, max_retries: int = 3) -> requests.Response | None:
         for attempt in range(max_retries + 1):
-            response = requests.get(url, headers=self._headers(), proxies=get_proxy_dict())
+            try:
+                response = requests.get(url, headers=self._headers(), proxies=get_proxy_dict())
+            except requests.exceptions.RequestException as e:
+                # DNS / connection / timeout — let the manager fall back to other sources.
+                logger.debug("financialdatasets request failed for %s: %s", url, e)
+                return None
             if response.status_code == 429 and attempt < max_retries:
                 time.sleep(60 + 30 * attempt)
                 continue

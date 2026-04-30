@@ -62,6 +62,7 @@ STATUS_MESSAGES = {
         "Analyzing risk-reward": "风险收益分析",
         "Analyzing sentiment": "情绪分析",
         "Analyzing skin in the game": "利益绑定分析",
+        "Analyzing stop doing list": "负面清单排查",
         "Analyzing tail risk": "尾部风险分析",
         "Analyzing trading patterns": "交易模式分析",
         "Analyzing valuation (Fisher style)": "估值分析（费雪风格）",
@@ -96,6 +97,7 @@ STATUS_MESSAGES = {
         "Generating Cathie Wood analysis": "生成伍德分析",
         "Generating Charlie Munger analysis": "生成芒格分析",
         "Generating Damodaran analysis": "生成达莫达兰分析",
+        "Generating Duan Yongping analysis": "生成段永平分析",
         "Generating Jhunjhunwala analysis": "生成琼琼瓦拉分析",
         "Generating Nassim Taleb analysis": "生成塔勒布分析",
         "Generating Pabrai analysis": "生成帕布雷分析",
@@ -125,6 +127,7 @@ AGENT_NAMES = {
         "Bill Ackman": "比尔·阿克曼",
         "Cathie Wood": "凯茜·伍德",
         "Charlie Munger": "查理·芒格",
+        "Duan Yongping": "段永平",
         "Michael Burry": "迈克尔·伯里",
         "Mohnish Pabrai": "莫尼什·帕布雷",
         "Nassim Taleb": "纳西姆·塔勒布",
@@ -311,7 +314,15 @@ def get_lang_instruction() -> str:
             "【语言要求】你必须使用简体中文撰写所有文本内容，包括 reasoning、summary、conclusion 等字段。"
             "禁止使用英文撰写分析内容。所有输出必须是中文。"
         )
-    return ""
+    # English (default): explicitly lock the output language so prompts that
+    # mention Chinese personas/terms (e.g. Duan Yongping) don't drift into
+    # Chinese on bilingual models.
+    return (
+        "\n\n"
+        "[Language requirement] All text content (reasoning, summary, "
+        "conclusion, etc.) MUST be written in English. Even when the persona "
+        "or terminology references another language, output in English only."
+    )
 
 
 def translate_agent_name(name: str) -> str:

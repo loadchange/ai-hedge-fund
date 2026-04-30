@@ -188,7 +188,7 @@ def calculate_trend_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_float(confidence, 0.5),
         "metrics": {
             "adx": safe_float(adx["adx"].iloc[-1]),
             "trend_strength": safe_float(trend_strength),
@@ -228,7 +228,7 @@ def calculate_mean_reversion_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_float(confidence, 0.5),
         "metrics": {
             "z_score": safe_float(z_score.iloc[-1]),
             "price_vs_bb": safe_float(price_vs_bb),
@@ -273,7 +273,7 @@ def calculate_momentum_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_float(confidence, 0.5),
         "metrics": {
             "momentum_1m": safe_float(mom_1m.iloc[-1]),
             "momentum_3m": safe_float(mom_3m.iloc[-1]),
@@ -320,7 +320,7 @@ def calculate_volatility_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_float(confidence, 0.5),
         "metrics": {
             "historical_volatility": safe_float(hist_vol.iloc[-1]),
             "volatility_regime": safe_float(current_vol_regime),
@@ -360,7 +360,7 @@ def calculate_stat_arb_signals(prices_df):
 
     return {
         "signal": signal,
-        "confidence": confidence,
+        "confidence": safe_float(confidence, 0.5),
         "metrics": {
             "hurst_exponent": safe_float(hurst),
             "skewness": safe_float(skew.iloc[-1]),
@@ -382,7 +382,7 @@ def weighted_signal_combination(signals, weights):
     for strategy, signal in signals.items():
         numeric_signal = signal_values[signal["signal"]]
         weight = weights[strategy]
-        confidence = signal["confidence"]
+        confidence = safe_float(signal["confidence"], 0.0)
 
         weighted_sum += numeric_signal * weight * confidence
         total_confidence += weight * confidence
@@ -401,7 +401,7 @@ def weighted_signal_combination(signals, weights):
     else:
         signal = "neutral"
 
-    return {"signal": signal, "confidence": abs(final_score)}
+    return {"signal": signal, "confidence": safe_float(abs(final_score), 0.0)}
 
 
 def normalize_pandas(obj):

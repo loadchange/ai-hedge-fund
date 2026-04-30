@@ -1,0 +1,209 @@
+name: Hedge Fund Issue Bot
+
+# Triggers when an issue is opened, edited, or (re)labeled and carries one of
+# the bot-ticker / bot-backtester labels (applied automatically by the issue
+# templates, or manually by a maintainer). The bot asks the configured AI to
+# parse arguments out of the issue, runs the corresponding command, and
+# replies with the result.
+#
+# Required repository secrets:
+#   AI_BASE_URL                  OpenAI-compatible chat-completions endpoint
+#   AI_API_KEY                   API key for that endpoint
+#   AI_MODEL                     model name (must exist in src/llm/api_models.json)
+# Optional repository secrets:
+#   FINANCIAL_DATASETS_API_KEY   for US line-item data; CN/HK do not need it
+
+on:
+  issues:
+    # `labeled` is intentionally NOT listed: when a user creates an issue
+    # from a template, GitHub fires both `opened` and `labeled` (the
+    # template applies the label as a separate step) and we'd start two
+    # parallel runs. `opened` already covers the template flow, and a
+    # maintainer who wants to retrigger an existing issue can just edit it.
+    types: [opened, edited]
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  # Serialise per-issue so a user editing the body in quick succession
+  # cannot stack up multiple analyses; the latest edit cancels the old one.
+  group: issue-bot-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'bot-ticker') ||
+      contains(github.event.issue.labels.*.name, 'bot-backtester')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect mode and language
+        id: mode
+        env:
+          HAS_TICKER: ${{ contains(github.event.issue.labels.*.name, 'bot-ticker') }}
+          HAS_ZH: ${{ contains(github.event.issue.labels.*.name, 'lang-zh') }}
+        run: |
+          if [[ "$HAS_TICKER" == "true" ]]; then
+            echo "mode=ticker" >> "$GITHUB_OUTPUT"
+            echo "script=src/main.py" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=backtester" >> "$GITHUB_OUTPUT"
+            echo "script=src/backtester.py" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "$HAS_ZH" == "true" ]]; then
+            echo "lang=zhCN" >> "$GITHUB_OUTPUT"
+          else
+            echo "lang=en" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Acknowledge receipt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          LANG: ${{ steps.mode.outputs.lang }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ "$LANG" == "zhCN" ]]; then
+            msg="🤖 已收到 \`$MODE\` 请求，正在解析参数并启动分析。日志：$RUN_URL"
+          else
+            msg="🤖 Received \`$MODE\` request — parsing arguments and starting analysis. Logs: $RUN_URL"
+          fi
+          gh issue comment "$ISSUE" --body "$msg"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Setup Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Parse issue with AI
+        id: parse
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+        run: |
+          python .github/scripts/parse_issue.py > parsed.json
+          ok=$(python -c "import json; print('true' if json.load(open('parsed.json')).get('ok') else 'false')")
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Reply with missing info
+        if: steps.parse.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          LANG: ${{ steps.mode.outputs.lang }}
+        run: |
+          python <<'PY' > comment.md
+          import json, os
+          d = json.load(open("parsed.json"))
+          reason = d.get("reason", "")
+          zh = os.environ.get("LANG") == "zhCN"
+          if zh:
+              print("⚠️ **信息不足，无法启动分析**\n")
+              print(f"**原因**：{reason or '未知原因'}\n")
+              print("**示例正文**：")
+              print("```")
+              print("Tickers: 600519.SS")
+              print("Date range: 2025-01-01 ~ 2025-04-01")
+              print("Analysts: warren_buffett, duan_yongping, charlie_munger")
+              print("```\n")
+              print("可用分析师 key 列表见 [README#agent-roster](../../#agent-roster)。补全信息后编辑本 issue，机器人会重新触发。")
+          else:
+              print("⚠️ **Insufficient information — cannot start analysis**\n")
+              print(f"**Reason**: {reason or 'Unknown.'}\n")
+              print("**Example body**:")
+              print("```")
+              print("Tickers: AAPL,MSFT")
+              print("Date range: 2025-01-01 ~ 2025-04-01")
+              print("Analysts: warren_buffett, duan_yongping, charlie_munger")
+              print("```\n")
+              print("See [README#agent-roster](../../#agent-roster) for available analyst keys. Edit the issue body to retrigger the bot.")
+          PY
+          gh issue comment "$ISSUE" --body-file comment.md
+
+      - name: Run analysis and render Markdown
+        id: run
+        if: steps.parse.outputs.ok == 'true'
+        env:
+          OPENAI_API_BASE: ${{ secrets.AI_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.AI_API_KEY }}
+          FINANCIAL_DATASETS_API_KEY: ${{ secrets.FINANCIAL_DATASETS_API_KEY }}
+          PYTHONIOENCODING: utf-8
+          NO_COLOR: "1"
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: uv run python .github/scripts/run_for_bot.py
+
+      - name: Reply with output and close issue
+        if: steps.parse.outputs.ok == 'true' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          LANG: ${{ steps.mode.outputs.lang }}
+        run: |
+          gh issue comment "$ISSUE" --body-file comment.md
+          if [[ "$LANG" == "zhCN" ]]; then
+            close_msg="分析完成，自动关闭 issue。"
+          else
+            close_msg="Analysis complete — closing the issue."
+          fi
+          gh issue close "$ISSUE" --comment "$close_msg"
+
+      - name: Reply on cancellation / timeout
+        if: cancelled() && steps.parse.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LANG: ${{ steps.mode.outputs.lang }}
+        run: |
+          python <<'PY' > fail_comment.md
+          import os
+          url = os.environ["RUN_URL"]
+          zh = os.environ.get("LANG") == "zhCN"
+          if zh:
+              print("⏱️ **任务被取消**，通常是因为超过 30 分钟的执行上限。\n")
+              print("常见原因：backtester 模式下输入参数过大（多 ticker × 长日期 × `all` 分析师）。\n")
+              print("**建议**：")
+              print("- 把日期范围缩到 1 个月以内")
+              print("- ticker 数降到 1–2 个")
+              print("- 指定 2–3 个具体 analyst（不要用 `all`）\n")
+              print(f"[查看完整日志]({url})")
+          else:
+              print("⏱️ **The task was cancelled**, usually because it exceeded the 30-minute timeout.\n")
+              print("Most common cause: the backtester request was too large (multiple tickers × long date range × `all` analysts).\n")
+              print("**Suggestions**:")
+              print("- Shorten the date range to 1 month or less")
+              print("- Use only 1–2 tickers")
+              print("- Pick 2–3 specific analyst keys instead of `all`\n")
+              print(f"[Full log]({url})")
+          PY
+          gh issue comment "$ISSUE" --body-file fail_comment.md
+
+      - name: Reply on failure
+        if: failure() && steps.parse.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LANG: ${{ steps.mode.outputs.lang }}
+        run: |
+          if [[ "$LANG" == "zhCN" ]]; then
+            body="❌ 分析过程中出错，请查看 [Action 日志]($RUN_URL)。"
+          else
+            body="❌ The analysis failed — see the [Action log]($RUN_URL) for details."
+          fi
+          gh issue comment "$ISSUE" --body "$body"

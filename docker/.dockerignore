@@ -2,7 +2,7 @@
 .git
 .gitignore
 
-# Poetry
+# Python virtualenvs / cache
 .venv
 __pycache__/
 *.py[cod]

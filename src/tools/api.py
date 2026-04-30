@@ -28,37 +28,37 @@ from src.data.models import (
 _cache = get_cache()
 
 
-def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
-    """
-    Make an API request with rate limiting handling and moderate backoff.
+def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response | None:
+    """Make an HTTP request with retry on 429, fallback on SSL through proxy.
 
-    Args:
-        url: The URL to request
-        headers: Headers to include in the request
-        method: HTTP method (GET or POST)
-        json_data: JSON data for POST requests
-        max_retries: Maximum number of retries (default: 3)
-
-    Returns:
-        requests.Response: The response object
-
-    Raises:
-        Exception: If the request fails with a non-429 error
+    Returns the Response on success (any status code), or None when the
+    network itself is unreachable (DNS failure, connection refused, timeout,
+    etc.). Callers must treat None as "skip this data source" — agents
+    should never crash the whole run because a single optional API is down.
     """
     proxies = get_proxy_dict()
+
+    def _do_request(use_proxies):
+        if method.upper() == "POST":
+            return requests.post(url, headers=headers, json=json_data, proxies=use_proxies)
+        return requests.get(url, headers=headers, proxies=use_proxies)
+
     for attempt in range(max_retries + 1):  # +1 for initial attempt
         try:
-            if method.upper() == "POST":
-                response = requests.post(url, headers=headers, json=json_data, proxies=proxies)
-            else:
-                response = requests.get(url, headers=headers, proxies=proxies)
+            response = _do_request(proxies)
         except requests.exceptions.SSLError as e:
-            # SSL error through proxy — retry without proxy
+            # SSL error through proxy — retry once without proxy.
             logger.debug("SSL error via proxy for %s, retrying without proxy: %s", url, e)
-            if method.upper() == "POST":
-                response = requests.post(url, headers=headers, json=json_data, proxies=None)
-            else:
-                response = requests.get(url, headers=headers, proxies=None)
+            try:
+                response = _do_request(None)
+            except requests.exceptions.RequestException as e2:
+                logger.debug("HTTP request to %s failed after SSL fallback: %s", url, e2)
+                return None
+        except requests.exceptions.RequestException as e:
+            # DNS failure / connection refused / timeout / other transport issues.
+            # Don't crash the agent graph — return None and let the caller move on.
+            logger.debug("HTTP request to %s failed: %s", url, e)
+            return None
 
         if response.status_code == 429 and attempt < max_retries:
             # Linear backoff: 60s, 90s, 120s, 150s...
@@ -67,8 +67,9 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             time.sleep(delay)
             continue
 
-        # Return the response (whether success, other errors, or final 429)
         return response
+
+    return None
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
@@ -117,14 +118,20 @@ def _cn_line_items_fallback(
 
     try:
         import akshare as ak
-        from src.data.sources.akshare_src import _suppress_tqdm, _pct_to_decimal, _safe_float
+        from src.data.sources.akshare_src import (
+            _AKSHARE_LOCK,
+            _pct_to_decimal,
+            _safe_float,
+            _suppress_tqdm,
+        )
         from src.data.sources.base import normalize_ticker
 
         code = ticker.replace(".SS", "").replace(".SZ", "").replace(".ss", "").replace(".sz", "")
         if not code.isdigit():
             code = normalize_ticker(ticker, "akshare").lstrip("shsz")
 
-        with _suppress_tqdm():
+        # Lock first so the tqdm-suppression patch is applied serially across threads.
+        with _AKSHARE_LOCK, _suppress_tqdm():
             df = ak.stock_financial_analysis_indicator(symbol=code, start_year="2020")
         if df.empty:
             return []
@@ -255,7 +262,7 @@ def search_line_items(
         "limit": limit,
     }
     response = _make_api_request(url, headers, method="POST", json_data=body)
-    if response.status_code != 200:
+    if response is None or response.status_code != 200:
         # Fallback for CN stocks
         return _cn_line_items_fallback(ticker, end_date, limit)
 
@@ -304,7 +311,7 @@ def get_insider_trades(
         url += f"&limit={limit}"
 
         response = _make_api_request(url, headers)
-        if response.status_code != 200:
+        if response is None or response.status_code != 200:
             break
 
         try:
@@ -369,11 +376,8 @@ def get_company_news(
             url += f"&start_date={start_date}"
         url += f"&limit={limit}"
 
-        try:
-            response = _make_api_request(url, headers)
-        except Exception:
-            break
-        if response.status_code != 200:
+        response = _make_api_request(url, headers)
+        if response is None or response.status_code != 200:
             break
 
         try:
@@ -434,7 +438,7 @@ def get_market_cap(
 
         url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
         response = _make_api_request(url, headers)
-        if response.status_code == 200:
+        if response is not None and response.status_code == 200:
             data = response.json()
             response_model = CompanyFactsResponse(**data)
             return response_model.company_facts.market_cap

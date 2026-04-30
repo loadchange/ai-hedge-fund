@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 
 import akshare as ak
 import pandas as pd
+
+# Global lock guarding all akshare calls. akshare ships with py-mini-racer
+# (V8 isolate) for some Sina/Eastmoney endpoints that decrypt JS-based
+# payloads. The V8 isolate pool is *not* thread-safe at initialization time —
+# concurrent calls (e.g. langgraph fan-out across many agents on the same
+# ticker) crash with `Check failed: !pool->IsInitialized()`. Serialising
+# akshare access avoids the race; the perf cost is small because results are
+# cached upstream after the first fetch.
+_AKSHARE_LOCK = threading.Lock()
 
 from src.data.models import FinancialMetrics, Price
 from .base import DataSource, classify_ticker, get_proxy_dict, normalize_ticker
@@ -129,7 +139,8 @@ class AkShareSource(DataSource):
         self, ticker: str, start_date: str, end_date: str
     ) -> list[Price]:
         try:
-            df = ak.stock_us_daily(symbol=ticker, adjust="qfq")
+            with _AKSHARE_LOCK:
+                df = ak.stock_us_daily(symbol=ticker, adjust="qfq")
             if df.empty or "date" not in df.columns:
                 return []
 
@@ -167,17 +178,19 @@ class AkShareSource(DataSource):
 
             # Try stock_hk_daily first, fallback to stock_hk_hist
             try:
-                df = ak.stock_hk_daily(symbol=symbol, adjust="qfq")
+                with _AKSHARE_LOCK:
+                    df = ak.stock_hk_daily(symbol=symbol, adjust="qfq")
                 if not df.empty and "date" in df.columns:
                     df["date"] = pd.to_datetime(df["date"])
                     start_dt = pd.to_datetime(start_date)
                     end_dt = pd.to_datetime(end_date)
                     df = df[(df["date"] >= start_dt) & (df["date"] <= end_dt)]
             except Exception:
-                df = ak.stock_hk_hist(
-                    symbol=symbol, period="daily",
-                    start_date=start_fmt, end_date=end_fmt, adjust="qfq"
-                )
+                with _AKSHARE_LOCK:
+                    df = ak.stock_hk_hist(
+                        symbol=symbol, period="daily",
+                        start_date=start_fmt, end_date=end_fmt, adjust="qfq"
+                    )
                 if not df.empty and "date" in df.columns:
                     df["date"] = pd.to_datetime(df["date"])
                     start_dt = pd.to_datetime(start_date)
@@ -210,7 +223,8 @@ class AkShareSource(DataSource):
     ) -> list[Price]:
         try:
             symbol = normalize_ticker(ticker, "akshare")  # 600519 -> sh600519
-            with _no_proxy_for(PROXY_BYPASS_DOMAINS):
+            # Lock first: see _fetch_cn_indicator_with_retry for rationale.
+            with _AKSHARE_LOCK, _no_proxy_for(PROXY_BYPASS_DOMAINS):
                 df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
             if df.empty or "date" not in df.columns:
                 return []
@@ -254,7 +268,8 @@ class AkShareSource(DataSource):
         self, ticker: str, end_date: str, limit: int
     ) -> list[FinancialMetrics]:
         try:
-            df = ak.stock_financial_us_analysis_indicator_em(symbol=ticker)
+            with _AKSHARE_LOCK:
+                df = ak.stock_financial_us_analysis_indicator_em(symbol=ticker)
             if df.empty:
                 return []
 
@@ -321,7 +336,8 @@ class AkShareSource(DataSource):
         try:
             symbol = normalize_ticker(ticker, "akshare")
             symbol = symbol.zfill(5)  # 100 -> 00100, 9988 -> 09988
-            df = ak.stock_financial_hk_analysis_indicator_em(symbol=symbol)
+            with _AKSHARE_LOCK:
+                df = ak.stock_financial_hk_analysis_indicator_em(symbol=symbol)
             if df.empty:
                 return []
 
@@ -394,7 +410,12 @@ class AkShareSource(DataSource):
         """Fetch CN financial indicator data with retry for transient SSL/network errors."""
         for attempt in range(max_retries):
             try:
-                with _no_proxy_for(PROXY_BYPASS_DOMAINS), _suppress_tqdm():
+                # Acquire the akshare lock FIRST so the tqdm-suppression patch
+                # (which mutates module-level attributes) is applied serially.
+                # Otherwise concurrent threads racing through _suppress_tqdm
+                # save each other's noop as "original" and the restore step
+                # leaves the module in patched state — or worse, leaks the bar.
+                with _AKSHARE_LOCK, _no_proxy_for(PROXY_BYPASS_DOMAINS), _suppress_tqdm():
                     return ak.stock_financial_analysis_indicator(symbol=code, start_year="2020")
             except Exception as e:
                 err_msg = str(e).lower()
