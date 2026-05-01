@@ -140,6 +140,92 @@ class CompanyFactsResponse(BaseModel):
     company_facts: CompanyFacts
 
 
+class EarningsData(BaseModel):
+    """Financial data for a single earnings period (quarterly or annual).
+
+    Returned as the ``quarterly`` / ``annual`` payload nested inside ``Earnings``.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    # Actuals vs. estimates
+    revenue: float | None = None
+    estimated_revenue: float | None = None
+    revenue_surprise: str | None = None  # "BEAT" | "MISS" | "MEET"
+    earnings_per_share: float | None = None
+    estimated_earnings_per_share: float | None = None
+    eps_surprise: str | None = None
+
+    # Income statement
+    net_income: float | None = None
+    gross_profit: float | None = None
+    operating_income: float | None = None
+    weighted_average_shares: float | None = None
+    weighted_average_shares_diluted: float | None = None
+    free_cash_flow: float | None = None
+
+    # Balance sheet
+    cash_and_equivalents: float | None = None
+    total_debt: float | None = None
+    total_assets: float | None = None
+    total_liabilities: float | None = None
+    shareholders_equity: float | None = None
+
+    # Cash flow
+    net_cash_flow_from_operations: float | None = None
+    capital_expenditure: float | None = None
+    net_cash_flow_from_investing: float | None = None
+    net_cash_flow_from_financing: float | None = None
+    change_in_cash_and_equivalents: float | None = None
+
+    # Period-over-period changes (omitted by API when null)
+    revenue_chg: float | None = None
+    net_income_chg: float | None = None
+    operating_income_chg: float | None = None
+    gross_profit_chg: float | None = None
+    free_cash_flow_chg: float | None = None
+
+
+class Earnings(BaseModel):
+    """Earnings response wrapping a quarterly + annual snapshot per ticker."""
+
+    model_config = {"extra": "ignore"}
+
+    ticker: str
+    report_period: str
+    fiscal_period: str | None = None
+    currency: str | None = None
+    quarterly: EarningsData | None = None
+    annual: EarningsData | None = None
+
+
+class Filing(BaseModel):
+    """SEC filing metadata returned by /filings."""
+
+    model_config = {"extra": "ignore"}
+
+    ticker: str | None = None
+    cik: str | None = None
+    accession_number: str | None = None
+    filing_type: str | None = None
+    filing_date: str | None = None
+    report_period: str | None = None
+    document_count: int | None = None
+    is_xbrl: bool | None = None
+    url: str | None = None
+
+
+class AnalystEstimate(BaseModel):
+    """Single analyst estimate from /analyst-estimates."""
+
+    model_config = {"extra": "ignore"}
+
+    fiscal_period: str | None = None
+    period: str | None = None
+    revenue: float | None = None
+    earnings_per_share: float | None = None
+
+
 class Position(BaseModel):
     cash: float = 0.0
     shares: int = 0

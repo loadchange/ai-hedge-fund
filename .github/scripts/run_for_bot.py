@@ -1,13 +1,10 @@
 """Run hedge fund / backtester from parsed.json and emit a Markdown reply.
 
-For the [ticker] mode we call run_hedge_fund() directly so we have the raw
-structured result (decisions + analyst_signals) and can render proper
-GitHub-flavoured Markdown tables — Rich's box-drawing tables look broken
-inside a code block when CJK and ASCII mix.
-
-For the [backtester] mode we still subprocess the script and post the
-captured terminal output as a fenced code block (stripping ANSI). The
-backtester's per-day output is too verbose to reformat usefully here.
+Both modes call the underlying engine programmatically so we have the raw
+structured result and can render proper GitHub-flavoured Markdown tables —
+Rich's box-drawing tables look broken inside a code block when CJK and
+ASCII mix. The full structured output is also written to disk so the
+workflow can attach it as an Action artifact for download.
 
 Inputs (env / files):
   parsed.json           — output of parse_issue.py (must have ok=true)
@@ -15,16 +12,15 @@ Inputs (env / files):
 
 Outputs:
   comment.md            — body for `gh issue comment --body-file`
-  result.json           — structured run result (ticker mode only, for audit)
-  output.txt            — raw stdout/stderr (backtester mode only)
+  result.json           — structured ticker result (ticker mode)
+  backtest_metrics.json — final performance metrics (backtester mode)
+  portfolio_values.json — full equity curve (backtester mode)
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -48,7 +44,6 @@ from src.i18n import (  # noqa: E402
 from src.utils.analysts import ANALYST_CONFIG, ANALYST_ORDER  # noqa: E402
 
 _FLAG_TRUE = {"--analysts-all", "--show-reasoning", "--ollama"}
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 _REASONING_CAP = 800
 
 
@@ -278,37 +273,162 @@ def _run_ticker(parsed: dict, flags: dict) -> None:
 # ── Backtester mode ──────────────────────────────────────────────────────────
 
 
-def _run_backtester(parsed: dict) -> None:
-    cmd = ["uv", "run", "python", "src/backtester.py"] + parsed["args"]
-    print("[bot] Running:", " ".join(cmd), flush=True)
-    captured = bytearray()
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as p:
-        assert p.stdout is not None
-        for chunk in iter(lambda: p.stdout.read(1024), b""):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.flush()
-            captured.extend(chunk)
-        ret = p.wait()
+def _serialise_point(p: dict) -> dict:
+    """Convert a PortfolioValuePoint to a JSON-safe dict (Date → ISO string)."""
+    out: dict = {}
+    for k, v in p.items():
+        if hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
 
-    raw = captured.decode("utf-8", errors="replace")
-    Path("output.txt").write_text(raw, encoding="utf-8")
 
-    cleaned = _ANSI_RE.sub("", raw)
-    MAX = 50_000
-    truncated = len(cleaned) > MAX
-    shown = cleaned[:MAX].rstrip()
+def _render_backtester_markdown(parsed_summary: str, metrics: dict, points: list, lang: str) -> str:
+    set_lang(lang)
+    zh = lang == "zhCN"
 
-    md = ["## 📈 回测结果\n"]
-    md.append(f"**调用参数**: `{parsed.get('summary', '')}`\n")
-    md.append("```")
-    md.append(shown)
-    if truncated:
-        md.append("\n... (输出已截断，完整结果见 Action 日志)")
-    md.append("```")
-    Path("comment.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    lines: list[str] = []
+    title = "📈 回测完成" if zh else "📈 Backtest complete"
+    params_label = "调用参数" if zh else "Parameters"
+    lines.append(f"## {title}\n")
+    lines.append(f"**{params_label}**: `{parsed_summary}`\n")
 
-    if ret != 0:
-        sys.exit(ret)
+    # Performance summary — always rendered, never truncated.
+    lines.append(f"### {'绩效摘要' if zh else 'Performance Summary'}\n")
+    lines.append(f"| {'指标' if zh else 'Metric'} | {'值' if zh else 'Value'} |")
+    lines.append("|---|---:|")
+
+    if points and len(points) >= 2:
+        first_value = points[0].get("Portfolio Value") or 0.0
+        last_value = points[-1].get("Portfolio Value") or 0.0
+        total_return = ((last_value - first_value) / first_value * 100) if first_value else 0.0
+        lines.append(f"| {get_text('initial_value')} | ${first_value:,.2f} |")
+        lines.append(f"| {get_text('final_value')} | ${last_value:,.2f} |")
+        lines.append(f"| {get_text('total_return')} | {total_return:+.2f}% |")
+    else:
+        lines.append(f"| {('数据点不足' if zh else 'Not enough data points')} | – |")
+
+    if isinstance(metrics, dict):
+        for key, formatter in (
+            ("sharpe_ratio", lambda v: f"{v:.2f}"),
+            ("sortino_ratio", lambda v: f"{v:.2f}"),
+            ("max_drawdown", lambda v: f"{v:+.2f}%"),
+        ):
+            v = metrics.get(key)
+            if v is None:
+                continue
+            label = get_text(key)
+            lines.append(f"| {label} | {formatter(v)} |")
+
+        total_costs = metrics.get("total_transaction_costs")
+        if isinstance(total_costs, (int, float)) and total_costs > 0:
+            label = "总交易成本" if zh else "Total Transaction Costs"
+            lines.append(f"| {label} | ${total_costs:,.2f} |")
+
+    lines.append("")
+
+    # Equity curve sample — last N trading days, full series in artifact.
+    if points:
+        N = 20
+        sample = points[-N:] if len(points) > N else points
+        header = "净值走势" if zh else "Equity curve"
+        recent = "最近" if zh else "last"
+        days = "个交易日" if zh else "trading days"
+        lines.append(f"### {header}（{recent} {len(sample)} {days}）\n" if zh else f"### {header} (last {len(sample)} trading days)\n")
+        lines.append(
+            f"| {'日期' if zh else 'Date'} | {'组合净值' if zh else 'Portfolio Value'} | "
+            f"{'多头敞口' if zh else 'Long'} | {'空头敞口' if zh else 'Short'} | "
+            f"{'净敞口' if zh else 'Net'} |"
+        )
+        lines.append("|---|---:|---:|---:|---:|")
+        for p in sample:
+            d = p.get("Date")
+            d_str = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+            pv = p.get("Portfolio Value", 0) or 0
+            le = p.get("Long Exposure", 0) or 0
+            se = p.get("Short Exposure", 0) or 0
+            ne = p.get("Net Exposure", 0) or 0
+            lines.append(f"| {d_str} | ${pv:,.2f} | ${le:,.2f} | ${se:,.2f} | ${ne:,.2f} |")
+
+        if len(points) > N:
+            note = (
+                f"\n_（共 {len(points)} 个交易日；完整序列见 Action 工件 `portfolio_values.json`）_"
+                if zh else
+                f"\n_(Total {len(points)} trading days; the full series is in workflow artifact `portfolio_values.json`.)_"
+            )
+            lines.append(note)
+
+    # Footer pointing to artifacts.
+    artifact_note = (
+        "\n---\n📎 **完整数据**：本次运行的 `portfolio_values.json`、`backtest_metrics.json`、`parsed.json` 已作为 Action 工件上传，可在本次 run 页面顶部 *Artifacts* 区域下载。"
+        if zh else
+        "\n---\n📎 **Full data**: `portfolio_values.json`, `backtest_metrics.json`, and `parsed.json` are uploaded as workflow artifacts — download them from the *Artifacts* section at the top of this run page."
+    )
+    lines.append(artifact_note)
+
+    return "\n".join(lines) + "\n"
+
+
+def _run_backtester(parsed: dict, flags: dict) -> None:
+    lang = flags.get("lang", "zhCN")
+    set_lang(lang)
+
+    tickers = flags["tickers"].split(",")
+    end_date = flags.get("end-date") or datetime.now().strftime("%Y-%m-%d")
+    start_date = flags.get("start-date") or (
+        datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=1)
+    ).strftime("%Y-%m-%d")
+    model_name = flags.get("model", "")
+    initial_cash = float(flags.get("initial-cash") or 100_000.0)
+    margin_req = float(flags.get("margin-requirement") or 0.0)
+    cost_bps = float(flags.get("cost-bps") or 10.0)
+    cost_model_name = flags.get("cost-model") or "fixed"
+
+    if flags.get("analysts-all"):
+        selected_analysts = list(ANALYST_CONFIG.keys())
+    elif flags.get("analysts"):
+        selected_analysts = flags["analysts"].split(",")
+    else:
+        selected_analysts = list(ANALYST_CONFIG.keys())
+
+    from src.backtester import run_backtest
+    from src.backtesting.costs import build_cost_model
+    from src.backtesting.engine import BacktestEngine
+    from src.main import run_hedge_fund
+
+    cost_model = build_cost_model(cost_model_name, bps=cost_bps)
+
+    engine = BacktestEngine(
+        agent=run_hedge_fund,
+        tickers=tickers,
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=initial_cash,
+        model_name=model_name,
+        model_provider=_resolve_provider(model_name),
+        selected_analysts=selected_analysts,
+        initial_margin_requirement=margin_req,
+        cost_model=cost_model,
+    )
+
+    metrics = run_backtest(engine) or {}
+    points = list(engine.get_portfolio_values())
+    metrics["total_transaction_costs"] = engine.get_total_transaction_costs()
+    metrics["costs_by_action"] = engine.get_costs_by_action()
+
+    # Persist structured outputs for the workflow's artifact step.
+    Path("backtest_metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, default=str, indent=2),
+        encoding="utf-8",
+    )
+    Path("portfolio_values.json").write_text(
+        json.dumps([_serialise_point(p) for p in points], ensure_ascii=False, default=str, indent=2),
+        encoding="utf-8",
+    )
+
+    md = _render_backtester_markdown(parsed.get("summary", ""), metrics, points, lang)
+    Path("comment.md").write_text(md, encoding="utf-8")
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -325,7 +445,7 @@ def main() -> None:
     flags = _parse_flags(parsed["args"])
 
     if mode == "backtester":
-        _run_backtester(parsed)
+        _run_backtester(parsed, flags)
     else:
         _run_ticker(parsed, flags)
 

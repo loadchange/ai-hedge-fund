@@ -147,6 +147,24 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: uv run python .github/scripts/run_for_bot.py
 
+      - name: Upload run artifacts
+        # Best-effort: if the account-level artifact quota is exhausted
+        # (HTTP 403 from CreateArtifact), don't take down the comment/close
+        # steps with us — the Markdown reply is already on disk.
+        if: always() && steps.parse.outputs.ok == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 9
+          path: |
+            comment.md
+            backtest_metrics.json
+            portfolio_values.json
+            result.json
+
       - name: Reply with output and close issue
         if: steps.parse.outputs.ok == 'true' && success()
         env:
@@ -181,7 +199,7 @@ jobs:
               print("- 把日期范围缩到 1 个月以内")
               print("- ticker 数降到 1–2 个")
               print("- 指定 2–3 个具体 analyst（不要用 `all`）\n")
-              print(f"[查看完整日志]({url})")
+              print(f"📎 已生成的部分数据已作为工件上传，可在 [run 页面]({url}#artifacts) 顶部 *Artifacts* 区域下载。")
           else:
               print("⏱️ **The task was cancelled**, usually because it exceeded the 30-minute timeout.\n")
               print("Most common cause: the backtester request was too large (multiple tickers × long date range × `all` analysts).\n")
@@ -189,7 +207,7 @@ jobs:
               print("- Shorten the date range to 1 month or less")
               print("- Use only 1–2 tickers")
               print("- Pick 2–3 specific analyst keys instead of `all`\n")
-              print(f"[Full log]({url})")
+              print(f"📎 Partial outputs (if any) are uploaded as workflow artifacts on the [run page]({url}#artifacts).")
           PY
           gh issue comment "$ISSUE" --body-file fail_comment.md
 

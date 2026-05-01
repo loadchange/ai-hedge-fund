@@ -79,6 +79,19 @@ class Portfolio:
     def get_realized_gains(self) -> Mapping[str, TickerRealizedGains]:
         return MappingProxyType(self._portfolio["realized_gains"])  # type: ignore[arg-type]
 
+    def deduct_cash(self, amount: float) -> float:
+        """Subtract *amount* from cash unconditionally; returns the deducted dollar value.
+
+        Used by the backtester to charge transaction costs after a fill.
+        Cash can go negative if a cost is taken on a marginal trade —
+        that's the honest answer (the trade should not have happened),
+        but we never raise here so a stray cost can't kill a backtest.
+        """
+        if amount is None or amount <= 0:
+            return 0.0
+        self._portfolio["cash"] -= float(amount)
+        return float(amount)
+
     def apply_long_buy(self, ticker: str, quantity: int, price: float) -> int:
         if quantity <= 0:
             return 0

@@ -44,6 +44,7 @@ class BacktestEngine:
         model_provider: str,
         selected_analysts: list[str] | None,
         initial_margin_requirement: float,
+        cost_model=None,
     ) -> None:
         self._agent = agent
         self._tickers = tickers
@@ -59,7 +60,13 @@ class BacktestEngine:
             initial_cash=initial_capital,
             margin_requirement=initial_margin_requirement,
         )
-        self._executor = TradeExecutor()
+        # Default to flat 10 bps if the caller doesn't supply a model —
+        # honest backtests should never be cost-free.
+        if cost_model is None:
+            from .costs import FixedBpsCostModel
+            cost_model = FixedBpsCostModel(bps=10.0)
+        self._cost_model = cost_model
+        self._executor = TradeExecutor(cost_model=cost_model)
         self._agent_controller = AgentController()
         self._perf = PerformanceMetricsCalculator()
         self._results = OutputBuilder(initial_capital=self._initial_capital)
@@ -190,5 +197,13 @@ class BacktestEngine:
 
     def get_portfolio_values(self) -> Sequence[PortfolioValuePoint]:
         return list(self._portfolio_values)
+
+    def get_total_transaction_costs(self) -> float:
+        """Total dollars paid in transaction costs across the backtest."""
+        return float(self._executor.total_costs_paid)
+
+    def get_costs_by_action(self) -> dict[str, float]:
+        """Per-action breakdown of transaction costs (buy / sell / short / cover)."""
+        return dict(self._executor.costs_by_action)
 
 

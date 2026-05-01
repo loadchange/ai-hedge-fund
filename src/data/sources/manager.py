@@ -9,6 +9,7 @@ from .financialsets import FinancialDatasetsSource
 from .yfinance_src import YFinanceSource
 from .akshare_src import AkShareSource
 from .tencent_src import TencentSource
+from .baostock_src import BaostockSource
 
 if TYPE_CHECKING:
     from src.data.models import Price, FinancialMetrics
@@ -31,17 +32,22 @@ class DataSourceManager:
             "yfinance": YFinanceSource(),
             "akshare": AkShareSource(),
             "tencent": TencentSource(),
+            "baostock": BaostockSource(),
         }
-        # Source priority per market
+        # Source priority per market.
+        # CN markets prefer baostock — it returns adjusted OHLCV plus
+        # quarterly fundamentals as structured tables (cleaner than
+        # akshare's Sina/Eastmoney scrape). akshare stays as the
+        # fallback when baostock is unreachable from a given network.
         self._price_priority: dict[str, list[str]] = {
             "us": ["financialdatasets", "tencent", "yfinance", "akshare"],
             "hk": ["tencent", "yfinance", "akshare"],
-            "cn": ["akshare"],
+            "cn": ["baostock", "akshare"],
         }
         self._metrics_priority: dict[str, list[str]] = {
             "us": ["financialdatasets", "yfinance", "akshare"],
             "hk": ["akshare", "yfinance"],
-            "cn": ["akshare"],
+            "cn": ["baostock", "akshare"],
         }
         # Track rate-limited sources: {source_name: cooldown_until_timestamp}
         self._rate_limited: dict[str, float] = {}
