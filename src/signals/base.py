@@ -16,20 +16,45 @@ Subclasses override at least one of the two; the unimplemented one raises
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 
 from src.signals.types import SignalResult
 
+SignalKind = Literal["technical", "fundamental"]
+
 
 class BaseSignal(ABC):
-    """Abstract base for quantitative signals (no LLM, pure math)."""
+    """Abstract base for quantitative signals (no LLM, pure math).
+
+    The ``kind`` property splits signals into two families that are
+    evaluated very differently:
+
+    * ``technical`` — derived purely from price/volume time series.
+      Implements :meth:`compute_from_prices`, so the validation runner
+      can roll a window forward day-by-day and CPCV produces a daily
+      strategy return.
+    * ``fundamental`` — derived from reported financials, analyst
+      estimates, or earnings dates. Updates on report dates rather than
+      every trading day, so day-by-day rolling is meaningless. The
+      validation runner refuses these in CPCV mode.
+
+    Concrete signals must override ``name`` and ``kind``; price-driven
+    ones additionally override ``compute_from_prices``.
+    """
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Signal identifier (e.g. ``"trend"``, ``"value"``)."""
+        ...
+
+    @property
+    @abstractmethod
+    def kind(self) -> SignalKind:
+        """``"technical"`` for price-driven, ``"fundamental"`` otherwise."""
         ...
 
     # ------------------------------------------------------------------
@@ -49,7 +74,7 @@ class BaseSignal(ABC):
         from src.tools.api import get_prices, prices_to_df
 
         start = (datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(years=1)).strftime("%Y-%m-%d")
-        prices = get_prices(ticker, start, end_date, api_key=kwargs.get("api_key"))
+        prices = get_prices(ticker, start, end_date)
         if not prices:
             return self._empty_result()
         return self.compute_from_prices(prices_to_df(prices))

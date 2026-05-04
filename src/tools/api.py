@@ -1,6 +1,4 @@
-import datetime
 import logging
-import os
 import pandas as pd
 import requests
 import time
@@ -9,19 +7,13 @@ logger = logging.getLogger(__name__)
 
 from src.data.cache import get_cache
 from src.data.sources import get_data_source_manager
-from src.data.sources.base import get_proxy_dict
+from src.data.sources.base import classify_ticker, get_proxy_dict
 from src.data.models import (
     CompanyNews,
-    CompanyNewsResponse,
     FinancialMetrics,
-    FinancialMetricsResponse,
     Price,
-    PriceResponse,
     LineItem,
-    LineItemResponse,
     InsiderTrade,
-    InsiderTradeResponse,
-    CompanyFactsResponse,
 )
 
 # Global cache instance
@@ -72,7 +64,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
     return None
 
 
-def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
+def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """Fetch price data from cache or multi-source manager."""
     cache_key = f"{ticker}_{start_date}_{end_date}"
 
@@ -92,7 +84,6 @@ def get_financial_metrics(
     end_date: str,
     period: str = "ttm",
     limit: int = 10,
-    api_key: str = None,
 ) -> list[FinancialMetrics]:
     """Fetch financial metrics from cache or multi-source manager."""
     cache_key = f"{ticker}_{period}_{end_date}_{limit}"
@@ -111,8 +102,7 @@ def get_financial_metrics(
 def _cn_line_items_fallback(
     ticker: str, end_date: str, limit: int = 10
 ) -> list[LineItem]:
-    """Construct LineItem objects from akshare CN financial data as a fallback."""
-    from src.data.sources.base import classify_ticker
+    """Construct LineItem objects from akshare CN financial data."""
     if classify_ticker(ticker) != "cn":
         return []
 
@@ -175,175 +165,193 @@ def _cn_line_items_fallback(
             if net_income and net_margin and net_margin != 0:
                 revenue = abs(net_income / net_margin)
 
-            # Build field dict — set all agent-expected fields to None by default
-            fields: dict = {
-                "ticker": ticker,
-                "report_period": report_period,
-                "period": "ttm",
-                "currency": "CNY",
-                # Fields agents access (set to None if unavailable)
-                "capital_expenditure": None,
-                "depreciation_and_amortization": None,
-                "dividends_and_other_cash_distributions": None,
-                "issuance_or_purchase_of_equity_shares": None,
-                "free_cash_flow": None,
-                "cash_and_equivalents": None,
-                "current_assets": None,
-                "current_liabilities": None,
-                "total_debt": None,
-                "goodwill_and_intangible_assets": None,
-                "intangible_assets": None,
-                "operating_expense": None,
-                "operating_income": None,
-                "research_and_development": None,
-                "debt_to_equity": None,
-                "gross_margin": None,
-                "operating_margin": None,
-                "return_on_invested_capital": None,
-                "ebit": None,
-                "ebitda": None,
-                "working_capital": None,
-                "book_value_per_share": None,
-                "earnings_per_share": None,
-                "operating_cash_flow_per_share": None,
-            }
-            # Override with available data
-            if gross_profit is not None:
-                fields["gross_profit"] = gross_profit
-            if net_income is not None:
-                fields["net_income"] = net_income
-            if total_assets is not None:
-                fields["total_assets"] = total_assets
-            if total_liabilities is not None:
-                fields["total_liabilities"] = total_liabilities
-            if shareholders_equity is not None:
-                fields["shareholders_equity"] = shareholders_equity
-            if outstanding_shares is not None:
-                fields["outstanding_shares"] = outstanding_shares
-            if revenue is not None:
-                fields["revenue"] = revenue
-            if eps is not None:
-                fields["earnings_per_share"] = eps
-            if bps is not None:
-                fields["book_value_per_share"] = bps
-            if ocf_per_share is not None:
-                fields["operating_cash_flow_per_share"] = ocf_per_share
-            item = LineItem(**fields)
-
-            items.append(item)
+            # LineItem declares every numeric field with a None default,
+            # so we only have to pass the values we have.
+            items.append(
+                LineItem(
+                    ticker=ticker,
+                    report_period=report_period,
+                    period="ttm",
+                    currency="CNY",
+                    gross_profit=gross_profit,
+                    net_income=net_income,
+                    total_assets=total_assets,
+                    total_liabilities=total_liabilities,
+                    shareholders_equity=shareholders_equity,
+                    outstanding_shares=outstanding_shares,
+                    revenue=revenue,
+                    earnings_per_share=eps,
+                    book_value_per_share=bps,
+                    operating_cash_flow_per_share=ocf_per_share,
+                    source="akshare",
+                )
+            )
         return items
     except Exception as e:
         logger.debug("CN line items fallback error for %s: %s", ticker, e)
         return []
 
 
+# yfinance row-name → our snake_case field mapping. Each value is
+# (df_kind, row_label) where df_kind ∈ {"cashflow","balance_sheet","income"}.
+_YF_LINE_ITEM_MAP: dict[str, tuple[str, str]] = {
+    # Cashflow rows
+    "capital_expenditure": ("cashflow", "Capital Expenditure"),
+    "free_cash_flow": ("cashflow", "Free Cash Flow"),
+    "dividends_and_other_cash_distributions": ("cashflow", "Cash Dividends Paid"),
+    "issuance_or_purchase_of_equity_shares": ("cashflow", "Net Common Stock Issuance"),
+    "operating_cash_flow": ("cashflow", "Operating Cash Flow"),
+    # Balance-sheet rows
+    "total_assets": ("balance_sheet", "Total Assets"),
+    "total_liabilities": ("balance_sheet", "Total Liabilities Net Minority Interest"),
+    "shareholders_equity": ("balance_sheet", "Stockholders Equity"),
+    "outstanding_shares": ("balance_sheet", "Ordinary Shares Number"),
+    "current_assets": ("balance_sheet", "Current Assets"),
+    "current_liabilities": ("balance_sheet", "Current Liabilities"),
+    "total_debt": ("balance_sheet", "Total Debt"),
+    "cash_and_equivalents": ("balance_sheet", "Cash And Cash Equivalents"),
+    "working_capital": ("balance_sheet", "Working Capital"),
+    "goodwill_and_intangible_assets": ("balance_sheet", "Goodwill And Other Intangible Assets"),
+    "intangible_assets": ("balance_sheet", "Other Intangible Assets"),
+    # Income-statement rows
+    "revenue": ("income", "Total Revenue"),
+    "gross_profit": ("income", "Gross Profit"),
+    "operating_income": ("income", "Operating Income"),
+    "operating_expense": ("income", "Operating Expense"),
+    "net_income": ("income", "Net Income"),
+    "ebit": ("income", "EBIT"),
+    "ebitda": ("income", "EBITDA"),
+    "research_and_development": ("income", "Research And Development"),
+    "depreciation_and_amortization": ("income", "Reconciled Depreciation"),
+    "earnings_per_share": ("income", "Diluted EPS"),
+}
+
+
+def _us_line_items_fallback(
+    ticker: str, end_date: str, period: str = "ttm", limit: int = 10
+) -> list[LineItem]:
+    """Construct LineItem objects from yfinance for US/HK tickers.
+
+    Pulls quarterly (period="ttm") or annual cashflow / balance-sheet /
+    income-statement DataFrames, picks columns ≤ end_date, and projects
+    each fiscal date into a :class:`LineItem` using ``_YF_LINE_ITEM_MAP``.
+    Margin / per-share fields are derived from the raw rows.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return []
+
+    try:
+        t = yf.Ticker(ticker)
+        is_quarterly = period == "ttm"
+        cashflow = t.quarterly_cashflow if is_quarterly else t.cashflow
+        balance = t.quarterly_balance_sheet if is_quarterly else t.balance_sheet
+        income = t.quarterly_financials if is_quarterly else t.financials
+    except Exception as e:
+        logger.debug("yfinance line items error for %s: %s", ticker, e)
+        return []
+
+    dfs = {"cashflow": cashflow, "balance_sheet": balance, "income": income}
+    all_cols: set = set()
+    for df in dfs.values():
+        if df is not None and not df.empty:
+            all_cols.update(df.columns)
+    if not all_cols:
+        return []
+
+    end_ts = pd.to_datetime(end_date)
+    valid_cols = sorted([c for c in all_cols if c <= end_ts], reverse=True)[:limit]
+
+    def _safe_get(df_kind: str, row: str, col) -> float | None:
+        df = dfs.get(df_kind)
+        if df is None or df.empty or row not in df.index or col not in df.columns:
+            return None
+        try:
+            v = df.at[row, col]
+            if pd.isna(v):
+                return None
+            return float(v)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    items: list[LineItem] = []
+    for col in valid_cols:
+        report_period = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)[:10]
+        fields: dict = {
+            "ticker": ticker,
+            "report_period": report_period,
+            "period": period,
+            "currency": "USD",
+            "source": "yfinance",
+        }
+        for our_field, (df_kind, yf_row) in _YF_LINE_ITEM_MAP.items():
+            v = _safe_get(df_kind, yf_row, col)
+            if v is not None:
+                fields[our_field] = v
+
+        # Derived ratios
+        rev = fields.get("revenue")
+        if rev:
+            if (gp := fields.get("gross_profit")) is not None:
+                fields["gross_margin"] = gp / rev
+            if (oi := fields.get("operating_income")) is not None:
+                fields["operating_margin"] = oi / rev
+        se = fields.get("shareholders_equity")
+        td = fields.get("total_debt")
+        if se and td is not None:
+            fields["debt_to_equity"] = td / se
+        sh = fields.get("outstanding_shares")
+        if se is not None and sh:
+            fields["book_value_per_share"] = se / sh
+        ocf = fields.get("operating_cash_flow")
+        if ocf is not None and sh:
+            fields["operating_cash_flow_per_share"] = ocf / sh
+        ni = fields.get("net_income")
+        invested = (td or 0) + (se or 0)
+        if ni is not None and invested:
+            fields["return_on_invested_capital"] = ni / invested
+
+        items.append(LineItem(**fields))
+
+    return items
+
+
 def search_line_items(
     ticker: str,
-    line_items: list[str],
+    line_items: list[str],  # noqa: ARG001 — kept for API compatibility; yfinance returns full schema
     end_date: str,
     period: str = "ttm",
     limit: int = 10,
-    api_key: str = None,
 ) -> list[LineItem]:
-    """Fetch line items from API, with CN fallback via akshare."""
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-    if financial_api_key:
-        headers["X-API-KEY"] = financial_api_key
+    """Fetch line items from free data sources.
 
-    url = "https://api.financialdatasets.ai/financials/search/line-items"
-
-    body = {
-        "tickers": [ticker],
-        "line_items": line_items,
-        "end_date": end_date,
-        "period": period,
-        "limit": limit,
-    }
-    response = _make_api_request(url, headers, method="POST", json_data=body)
-    if response is None or response.status_code != 200:
-        # Fallback for CN stocks
+    CN tickers go through the akshare-derived fallback; US/HK tickers go
+    through a yfinance-derived fallback. ``line_items`` is accepted for
+    backwards compatibility but ignored — agents read whatever fields
+    are present on the returned :class:`LineItem`.
+    """
+    market = classify_ticker(ticker)
+    if market == "cn":
         return _cn_line_items_fallback(ticker, end_date, limit)
-
-    try:
-        data = response.json()
-        response_model = LineItemResponse(**data)
-        search_results = response_model.search_results
-    except Exception as e:
-        logger.warning("Failed to parse line items response for %s: %s", ticker, e)
-        return _cn_line_items_fallback(ticker, end_date, limit)
-    if not search_results:
-        return _cn_line_items_fallback(ticker, end_date, limit)
-
-    # Cache the results
-    return search_results[:limit]
+    return _us_line_items_fallback(ticker, end_date, period, limit)
 
 
 def get_insider_trades(
-    ticker: str,
-    end_date: str,
-    start_date: str | None = None,
-    limit: int = 1000,
-    api_key: str = None,
+    ticker: str,  # noqa: ARG001
+    end_date: str,  # noqa: ARG001
+    start_date: str | None = None,  # noqa: ARG001
+    limit: int = 1000,  # noqa: ARG001
 ) -> list[InsiderTrade]:
-    """Fetch insider trades from cache or API."""
-    # Create a cache key that includes all parameters to ensure exact matches
-    cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-    
-    # Check cache first - simple exact match
-    if cached_data := _cache.get_insider_trades(cache_key):
-        return [InsiderTrade(**trade) for trade in cached_data]
+    """Insider-trade data is not available from any free source we ship.
 
-    # If not in cache, fetch from API
-    headers = {}
-    financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-    if financial_api_key:
-        headers["X-API-KEY"] = financial_api_key
-
-    all_trades = []
-    current_end_date = end_date
-
-    while True:
-        url = f"https://api.financialdatasets.ai/insider-trades/?ticker={ticker}&filing_date_lte={current_end_date}"
-        if start_date:
-            url += f"&filing_date_gte={start_date}"
-        url += f"&limit={limit}"
-
-        response = _make_api_request(url, headers)
-        if response is None or response.status_code != 200:
-            break
-
-        try:
-            data = response.json()
-            response_model = InsiderTradeResponse(**data)
-            insider_trades = response_model.insider_trades
-        except Exception as e:
-            logger.warning("Failed to parse insider trades response for %s: %s", ticker, e)
-            break
-
-        if not insider_trades:
-            break
-
-        all_trades.extend(insider_trades)
-
-        # Only continue pagination if we have a start_date and got a full page
-        if not start_date or len(insider_trades) < limit:
-            break
-
-        # Update end_date to the oldest filing date from current batch for next iteration
-        current_end_date = min(trade.filing_date for trade in insider_trades).split("T")[0]
-
-        # If we've reached or passed the start_date, we can stop
-        if current_end_date <= start_date:
-            break
-
-    if not all_trades:
-        return []
-
-    # Cache the results using the comprehensive cache key
-    _cache.set_insider_trades(cache_key, [trade.model_dump() for trade in all_trades])
-    return all_trades
+    Form 4 parsing from SEC EDGAR would close the gap for US tickers but
+    is out of scope for this build. Returns an empty list; agents that
+    weight insider activity (sentiment, peter_lynch, michael_burry,
+    stanley_druckenmiller) already treat empty input as "no signal" and
+    fall back to their other inputs.
+    """
+    return []
 
 
 def get_company_news(
@@ -351,100 +359,102 @@ def get_company_news(
     end_date: str,
     start_date: str | None = None,
     limit: int = 1000,
-    api_key: str = None,
 ) -> list[CompanyNews]:
-    """Fetch company news from cache or API."""
-    # Create a cache key that includes all parameters to ensure exact matches
+    """Fetch company news from yfinance (US/HK). CN: returns empty.
+
+    yfinance's ``Ticker.news`` returns ~10–30 recent articles per ticker
+    with no historical pagination, so ``start_date`` / ``end_date`` /
+    ``limit`` filter the available headlines client-side rather than
+    paging an API.
+    """
     cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-    
-    # Check cache first - simple exact match
     if cached_data := _cache.get_company_news(cache_key):
         return [CompanyNews(**news) for news in cached_data]
 
-    # If not in cache, fetch from API
-    headers = {}
-    financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-    if financial_api_key:
-        headers["X-API-KEY"] = financial_api_key
-
-    all_news = []
-    current_end_date = end_date
-
-    while True:
-        url = f"https://api.financialdatasets.ai/news/?ticker={ticker}&end_date={current_end_date}"
-        if start_date:
-            url += f"&start_date={start_date}"
-        url += f"&limit={limit}"
-
-        response = _make_api_request(url, headers)
-        if response is None or response.status_code != 200:
-            break
-
-        try:
-            data = response.json()
-            response_model = CompanyNewsResponse(**data)
-            company_news = response_model.news
-        except Exception as e:
-            logger.warning("Failed to parse company news response for %s: %s", ticker, e)
-            break
-
-        if not company_news:
-            break
-
-        all_news.extend(company_news)
-
-        # Only continue pagination if we have a start_date and got a full page
-        if not start_date or len(company_news) < limit:
-            break
-
-        # Update end_date to the oldest date from current batch for next iteration
-        current_end_date = min(news.date for news in company_news).split("T")[0]
-
-        # If we've reached or passed the start_date, we can stop
-        if current_end_date <= start_date:
-            break
-
-    if not all_news:
+    market = classify_ticker(ticker)
+    if market == "cn":
         return []
 
-    # Cache the results using the comprehensive cache key
-    _cache.set_company_news(cache_key, [news.model_dump() for news in all_news])
-    return all_news
+    try:
+        import yfinance as yf
+    except ImportError:
+        return []
+
+    try:
+        raw = yf.Ticker(ticker).news or []
+    except Exception as e:
+        logger.debug("yfinance news error for %s: %s", ticker, e)
+        return []
+
+    # yfinance returns either the legacy flat dict or {id, content: {...}}.
+    # Normalise both shapes into a CompanyNews.
+    end_ts = pd.to_datetime(end_date)
+    start_ts = pd.to_datetime(start_date) if start_date else None
+
+    items: list[CompanyNews] = []
+    for art in raw:
+        content = art.get("content") if isinstance(art, dict) else None
+        body = content if isinstance(content, dict) else art
+        title = body.get("title") if isinstance(body, dict) else None
+        if not title:
+            continue
+        publisher = body.get("publisher") or (body.get("provider") or {}).get("displayName") or "yfinance"
+        # yfinance gives publish time as either a unix ts or an ISO string.
+        pub_raw = body.get("pubDate") or body.get("providerPublishTime")
+        try:
+            pub_ts = pd.to_datetime(pub_raw, unit="s") if isinstance(pub_raw, (int, float)) else pd.to_datetime(pub_raw)
+        except Exception:
+            continue
+        if pd.isna(pub_ts):
+            continue
+        # Strip tz so we can compare against the tz-naive start/end dates.
+        try:
+            pub_ts = pub_ts.tz_localize(None) if pub_ts.tz is not None else pub_ts
+        except (AttributeError, TypeError):
+            pass
+        if pub_ts > end_ts:
+            continue
+        if start_ts is not None and pub_ts < start_ts:
+            continue
+
+        url = body.get("canonicalUrl", {}).get("url") if isinstance(body.get("canonicalUrl"), dict) else body.get("link")
+        items.append(
+            CompanyNews(
+                ticker=ticker,
+                title=title,
+                author=body.get("author"),
+                source=str(publisher),
+                date=pub_ts.strftime("%Y-%m-%d"),
+                url=url or "",
+                sentiment=None,
+            )
+        )
+        if len(items) >= limit:
+            break
+
+    if items:
+        _cache.set_company_news(cache_key, [n.model_dump() for n in items])
+    return items
 
 
 def get_market_cap(
     ticker: str,
-    end_date: str,
-    api_key: str = None,
+    end_date: str,  # noqa: ARG001 — kept for API compatibility, sources don't use it
 ) -> float | None:
-    """Fetch market cap from cache, financial metrics, Tencent, or company facts API."""
-    from src.data.sources.base import classify_ticker
+    """Fetch market cap from real-time / fundamentals sources only.
 
+    CN/HK: Tencent realtime quote is the most current source. Falls
+    back to financial-metrics for any market when realtime is missing.
+    """
     market = classify_ticker(ticker)
 
-    # Try Tencent real-time quote for CN/HK stocks (always available)
     if market in ("cn", "hk"):
         from src.data.sources.tencent_src import TencentSource
         quote = TencentSource().get_realtime_quote(ticker)
         if quote and quote.get("market_cap"):
             return quote["market_cap"]
 
-    # For non-HK stocks when end_date is today, try company facts API first
-    if market not in ("hk", "cn") and end_date == datetime.datetime.now().strftime("%Y-%m-%d"):
-        headers = {}
-        financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
-        if financial_api_key:
-            headers["X-API-KEY"] = financial_api_key
-
-        url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
-        response = _make_api_request(url, headers)
-        if response is not None and response.status_code == 200:
-            data = response.json()
-            response_model = CompanyFactsResponse(**data)
-            return response_model.company_facts.market_cap
-
-    # Try to get market cap from financial metrics (works for all markets)
-    financial_metrics = get_financial_metrics(ticker, end_date, api_key=api_key)
+    financial_metrics = get_financial_metrics(ticker, end_date)
     if financial_metrics and financial_metrics[0].market_cap:
         return financial_metrics[0].market_cap
 
@@ -463,7 +473,6 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
     return df
 
 
-# Update the get_price_data function to use the new functions
-def get_price_data(ticker: str, start_date: str, end_date: str, api_key: str = None) -> pd.DataFrame:
-    prices = get_prices(ticker, start_date, end_date, api_key=api_key)
+def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    prices = get_prices(ticker, start_date, end_date)
     return prices_to_df(prices)

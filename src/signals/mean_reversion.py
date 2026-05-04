@@ -20,6 +20,10 @@ class MeanReversionSignal(BaseSignal):
     def name(self) -> str:
         return "mean_reversion"
 
+    @property
+    def kind(self) -> str:
+        return "technical"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:
         ma_50 = prices_df["close"].rolling(window=50).mean()
         std_50 = prices_df["close"].rolling(window=50).std()

@@ -20,6 +20,10 @@ class ValueSignal(BaseSignal):
     def name(self) -> str:
         return "value"
 
+    @property
+    def kind(self) -> str:
+        return "fundamental"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:  # noqa: ARG002
         # Value signal needs financial metrics, not prices.
         raise NotImplementedError(
@@ -29,7 +33,7 @@ class ValueSignal(BaseSignal):
     def compute(self, ticker: str, end_date: str, **kwargs) -> SignalResult:
         from src.tools.api import get_financial_metrics
 
-        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=1, api_key=kwargs.get("api_key"))
+        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=1)
         if not metrics:
             return self._empty_result()
         m = metrics[0]

@@ -1,26 +1,30 @@
 name: Hedge Fund Issue Bot
 
-# Triggers when an issue is opened, edited, or (re)labeled and carries one of
-# the bot-ticker / bot-backtester labels (applied automatically by the issue
-# templates, or manually by a maintainer). The bot asks the configured AI to
-# parse arguments out of the issue, runs the corresponding command, and
-# replies with the result.
+# Triggers when an issue is opened or edited and carries one of the bot
+# labels (applied automatically by the issue templates, or manually by a
+# maintainer). The bot parses arguments out of the issue, runs the
+# corresponding command, and replies with the result.
+#
+# Supported modes (one label per template):
+#   bot-ticker        single-day multi-agent analysis  (LLM-driven)
+#   bot-backtester    multi-day backtest               (LLM-driven)
+#   bot-validate      CPCV + PBO signal evaluation     (no LLM)
+#   bot-event-study   market model + CAR around event  (no LLM)
 #
 # Required repository secrets:
 #   AI_BASE_URL                  OpenAI-compatible chat-completions endpoint
 #   AI_API_KEY                   API key for that endpoint
 #   AI_MODEL                     model name (must exist in src/llm/api_models.json)
-# Optional repository secrets:
-#   FINANCIAL_DATASETS_API_KEY   for US line-item data; CN/HK do not need it
 
 on:
   issues:
-    # `labeled` is intentionally NOT listed: when a user creates an issue
-    # from a template, GitHub fires both `opened` and `labeled` (the
-    # template applies the label as a separate step) and we'd start two
-    # parallel runs. `opened` already covers the template flow, and a
-    # maintainer who wants to retrigger an existing issue can just edit it.
-    types: [opened, edited]
+    # We listen to `labeled` because GitHub applies template labels
+    # *after* the `opened` event fires (we observed delays of ~30s on
+    # #28). Without `labeled`, freshly opened template issues skip the
+    # job-level `if` check and never run. The `concurrency` block below
+    # uses `cancel-in-progress: true` so a later trigger for the same
+    # issue cancels the earlier run rather than stacking.
+    types: [opened, edited, labeled]
 
 permissions:
   issues: write
@@ -36,9 +40,11 @@ jobs:
   analyze:
     if: >-
       contains(github.event.issue.labels.*.name, 'bot-ticker') ||
-      contains(github.event.issue.labels.*.name, 'bot-backtester')
+      contains(github.event.issue.labels.*.name, 'bot-backtester') ||
+      contains(github.event.issue.labels.*.name, 'bot-validate') ||
+      contains(github.event.issue.labels.*.name, 'bot-event-study')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -47,14 +53,21 @@ jobs:
         id: mode
         env:
           HAS_TICKER: ${{ contains(github.event.issue.labels.*.name, 'bot-ticker') }}
+          HAS_BACKTESTER: ${{ contains(github.event.issue.labels.*.name, 'bot-backtester') }}
+          HAS_VALIDATE: ${{ contains(github.event.issue.labels.*.name, 'bot-validate') }}
+          HAS_EVENT_STUDY: ${{ contains(github.event.issue.labels.*.name, 'bot-event-study') }}
           HAS_ZH: ${{ contains(github.event.issue.labels.*.name, 'lang-zh') }}
         run: |
           if [[ "$HAS_TICKER" == "true" ]]; then
             echo "mode=ticker" >> "$GITHUB_OUTPUT"
-            echo "script=src/main.py" >> "$GITHUB_OUTPUT"
-          else
+          elif [[ "$HAS_BACKTESTER" == "true" ]]; then
             echo "mode=backtester" >> "$GITHUB_OUTPUT"
-            echo "script=src/backtester.py" >> "$GITHUB_OUTPUT"
+          elif [[ "$HAS_VALIDATE" == "true" ]]; then
+            echo "mode=validate" >> "$GITHUB_OUTPUT"
+          elif [[ "$HAS_EVENT_STUDY" == "true" ]]; then
+            echo "mode=event_study" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=ticker" >> "$GITHUB_OUTPUT"
           fi
           if [[ "$HAS_ZH" == "true" ]]; then
             echo "lang=zhCN" >> "$GITHUB_OUTPUT"
@@ -96,7 +109,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
         run: |
-          python .github/scripts/parse_issue.py > parsed.json
+          uv run python .github/scripts/parse_issue.py > parsed.json
           ok=$(python -c "import json; print('true' if json.load(open('parsed.json')).get('ok') else 'false')")
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
 
@@ -106,32 +119,66 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE: ${{ github.event.issue.number }}
           LANG: ${{ steps.mode.outputs.lang }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           python <<'PY' > comment.md
           import json, os
           d = json.load(open("parsed.json"))
           reason = d.get("reason", "")
           zh = os.environ.get("LANG") == "zhCN"
-          if zh:
+          mode = os.environ.get("MODE", "ticker")
+          examples = {
+              "ticker": (
+                  ["Tickers: 600519.SS", "Date range: 2025-01-01 ~ 2025-04-01",
+                   "Analysts: warren_buffett, duan_yongping, charlie_munger"],
+                  ["Tickers: AAPL,MSFT", "Date range: 2025-01-01 ~ 2025-04-01",
+                   "Analysts: warren_buffett, duan_yongping, charlie_munger"],
+              ),
+              "backtester": (
+                  ["Tickers: 600519.SS", "Date range: 2025-01-01 ~ 2025-02-01",
+                   "Analysts: warren_buffett, duan_yongping"],
+                  ["Tickers: AAPL,MSFT", "Date range: 2025-01-01 ~ 2025-02-01",
+                   "Analysts: warren_buffett, duan_yongping"],
+              ),
+              "validate": (
+                  ["Signals: momentum, mean_reversion", "Tickers: AAPL,MSFT,NVDA",
+                   "Start: 2020-01-01", "End: 2025-01-01"],
+                  ["Signals: momentum, mean_reversion", "Tickers: AAPL,MSFT,NVDA",
+                   "Start: 2020-01-01", "End: 2025-01-01"],
+              ),
+              "event_study": (
+                  ["Ticker: 600519.SS", "Event date: 2025-04-15",
+                   "Window: (-3, +3)", "Benchmark: 000300.SS"],
+                  ["Ticker: NVDA", "Event date: 2025-02-13",
+                   "Window: (-3, +3)", "Benchmark: SPY"],
+              ),
+          }
+          example_zh, example_en = examples.get(mode, examples["ticker"])
+          # Capacity-error reasons (and any future "self-contained" ones)
+          # ship full markdown — the wrapping header + generic example
+          # body would only repeat what they already say. Strip the
+          # sentinel and post the reason verbatim.
+          SELF_CONTAINED = "<!-- self-contained -->"
+          if reason and reason.startswith(SELF_CONTAINED):
+              print(reason[len(SELF_CONTAINED):].lstrip("\n"))
+          elif zh:
               print("⚠️ **信息不足，无法启动分析**\n")
               print(f"**原因**：{reason or '未知原因'}\n")
               print("**示例正文**：")
               print("```")
-              print("Tickers: 600519.SS")
-              print("Date range: 2025-01-01 ~ 2025-04-01")
-              print("Analysts: warren_buffett, duan_yongping, charlie_munger")
+              for line in example_zh:
+                  print(line)
               print("```\n")
-              print("可用分析师 key 列表见 [README#agent-roster](../../#agent-roster)。补全信息后编辑本 issue，机器人会重新触发。")
+              print("补全信息后编辑本 issue，机器人会重新触发。")
           else:
               print("⚠️ **Insufficient information — cannot start analysis**\n")
               print(f"**Reason**: {reason or 'Unknown.'}\n")
               print("**Example body**:")
               print("```")
-              print("Tickers: AAPL,MSFT")
-              print("Date range: 2025-01-01 ~ 2025-04-01")
-              print("Analysts: warren_buffett, duan_yongping, charlie_munger")
+              for line in example_en:
+                  print(line)
               print("```\n")
-              print("See [README#agent-roster](../../#agent-roster) for available analyst keys. Edit the issue body to retrigger the bot.")
+              print("Edit the issue body to retrigger the bot.")
           PY
           gh issue comment "$ISSUE" --body-file comment.md
 
@@ -141,7 +188,6 @@ jobs:
         env:
           OPENAI_API_BASE: ${{ secrets.AI_BASE_URL }}
           OPENAI_API_KEY: ${{ secrets.AI_API_KEY }}
-          FINANCIAL_DATASETS_API_KEY: ${{ secrets.FINANCIAL_DATASETS_API_KEY }}
           PYTHONIOENCODING: utf-8
           NO_COLOR: "1"
           MODE: ${{ steps.mode.outputs.mode }}
@@ -161,9 +207,12 @@ jobs:
           compression-level: 9
           path: |
             comment.md
+            parsed.json
             backtest_metrics.json
             portfolio_values.json
             result.json
+            validation_results.json
+            event_study_result.json
 
       - name: Reply with output and close issue
         if: steps.parse.outputs.ok == 'true' && success()
@@ -193,18 +242,18 @@ jobs:
           url = os.environ["RUN_URL"]
           zh = os.environ.get("LANG") == "zhCN"
           if zh:
-              print("⏱️ **任务被取消**，通常是因为超过 30 分钟的执行上限。\n")
+              print("⏱️ **任务被取消**，通常是因为超过 60 分钟的执行上限。\n")
               print("常见原因：backtester 模式下输入参数过大（多 ticker × 长日期 × `all` 分析师）。\n")
               print("**建议**：")
-              print("- 把日期范围缩到 1 个月以内")
+              print("- 把日期范围缩到 2–3 个月以内")
               print("- ticker 数降到 1–2 个")
               print("- 指定 2–3 个具体 analyst（不要用 `all`）\n")
               print(f"📎 已生成的部分数据已作为工件上传，可在 [run 页面]({url}#artifacts) 顶部 *Artifacts* 区域下载。")
           else:
-              print("⏱️ **The task was cancelled**, usually because it exceeded the 30-minute timeout.\n")
+              print("⏱️ **The task was cancelled**, usually because it exceeded the 60-minute timeout.\n")
               print("Most common cause: the backtester request was too large (multiple tickers × long date range × `all` analysts).\n")
               print("**Suggestions**:")
-              print("- Shorten the date range to 1 month or less")
+              print("- Shorten the date range to 2–3 months or less")
               print("- Use only 1–2 tickers")
               print("- Pick 2–3 specific analyst keys instead of `all`\n")
               print(f"📎 Partial outputs (if any) are uploaded as workflow artifacts on the [run page]({url}#artifacts).")

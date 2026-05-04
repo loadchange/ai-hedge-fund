@@ -1,21 +1,19 @@
-"""Earnings-surprise signal — react to BEAT / MISS / MEET on revenue & EPS.
+"""Earnings-surprise signal — score the latest EPS beat/miss vs. estimate.
 
-Reads the latest :class:`Earnings` payload from
-``FinancialDatasetsSource.get_earnings`` and produces a signed score
-biased to recent quarters. ``BEAT`` on both revenue and EPS scores +1;
-``MISS`` on both scores −1; mixed or ``MEET`` produces a smaller score.
-
-Falls back to neutral when the API does not return earnings data (e.g.
-A-shares, where this signal is not yet supported).
+Pulls quarterly earnings dates + actuals + estimates from yfinance
+(``Ticker.earnings_dates``) and computes a SUE-like score: positive
+when actual EPS beats the consensus estimate, negative on a miss,
+scaled by the magnitude of the surprise relative to estimate. The
+signal degrades to neutral for tickers yfinance can't provide
+earnings for (most A-shares, some HK names).
 """
 
 from __future__ import annotations
 
+import pandas as pd
+
 from src.signals.base import BaseSignal
 from src.signals.types import SignalResult
-
-
-_SURPRISE_SCORE = {"BEAT": 1.0, "MEET": 0.0, "MISS": -1.0}
 
 
 class EarningsSurpriseSignal(BaseSignal):
@@ -25,67 +23,60 @@ class EarningsSurpriseSignal(BaseSignal):
     def name(self) -> str:
         return "earnings_surprise"
 
+    @property
+    def kind(self) -> str:
+        return "fundamental"
+
     def compute_from_prices(self, prices_df):  # noqa: ARG002
         raise NotImplementedError(
             "EarningsSurpriseSignal requires earnings data — use compute(ticker, end_date)."
         )
 
-    def compute(self, ticker: str, end_date: str, **kwargs) -> SignalResult:
-        from src.data.sources.financialsets import FinancialDatasetsSource
+    def compute(self, ticker: str, end_date: str, **kwargs) -> SignalResult:  # noqa: ARG002
+        try:
+            import yfinance as yf
+        except ImportError:
+            return self._neutral("yfinance not installed")
 
-        api_key = kwargs.get("api_key")
-        with FinancialDatasetsSource(api_key=api_key) as fd:
-            earnings = fd.get_earnings(ticker)
+        try:
+            df = yf.Ticker(ticker).earnings_dates
+        except Exception as e:
+            return self._neutral(f"yfinance earnings_dates error: {e}")
 
-        if earnings is None or earnings.quarterly is None:
-            return SignalResult(
-                signal_name=self.name,
-                value=0.0,
-                direction="neutral",
-                confidence=0.5,
-                components={},
-                metadata={"note": "no earnings data available"},
-            )
+        if df is None or df.empty:
+            return self._neutral("no earnings data available")
 
-        q = earnings.quarterly
-        components: dict[str, float] = {}
-        scores: list[float] = []
+        # Keep only past earnings on/before end_date that have actual EPS reported.
+        end_ts = pd.to_datetime(end_date)
+        df = df.copy()
+        # yfinance index is a tz-aware DatetimeIndex; strip tz for comparison.
+        try:
+            df.index = df.index.tz_localize(None)
+        except (TypeError, AttributeError):
+            pass
+        df = df[df.index <= end_ts]
+        eps_actual_col = "Reported EPS" if "Reported EPS" in df.columns else "EPS Actual"
+        eps_estimate_col = "EPS Estimate"
+        if eps_actual_col not in df.columns or eps_estimate_col not in df.columns:
+            return self._neutral("yfinance schema missing EPS columns")
+        df = df[df[eps_actual_col].notna() & df[eps_estimate_col].notna()]
+        if df.empty:
+            return self._neutral("no actual-vs-estimate EPS rows")
 
-        rev_surprise = (q.revenue_surprise or "").upper()
-        if rev_surprise in _SURPRISE_SCORE:
-            components["revenue_surprise_score"] = _SURPRISE_SCORE[rev_surprise]
-            scores.append(_SURPRISE_SCORE[rev_surprise])
+        latest = df.sort_index(ascending=False).iloc[0]
+        actual = self._safe_float(latest[eps_actual_col])
+        estimate = self._safe_float(latest[eps_estimate_col])
+        if not estimate:
+            return self._neutral("estimate is zero/missing")
 
-        eps_surprise = (q.eps_surprise or "").upper()
-        if eps_surprise in _SURPRISE_SCORE:
-            components["eps_surprise_score"] = _SURPRISE_SCORE[eps_surprise]
-            scores.append(_SURPRISE_SCORE[eps_surprise])
+        relative = (actual - estimate) / abs(estimate)
+        composite = self._normalize_to_signal(self._sigmoid(relative, scale=10.0))
 
-        # Magnitude — surprise size in pct.
-        if q.revenue is not None and q.estimated_revenue and q.estimated_revenue != 0:
-            mag = (q.revenue - q.estimated_revenue) / abs(q.estimated_revenue)
-            components["revenue_surprise_magnitude"] = self._safe_float(mag)
-            scores.append(self._sigmoid(self._safe_float(mag), scale=20.0))
-
-        if q.earnings_per_share is not None and q.estimated_earnings_per_share and q.estimated_earnings_per_share != 0:
-            mag = (q.earnings_per_share - q.estimated_earnings_per_share) / abs(
-                q.estimated_earnings_per_share
-            )
-            components["eps_surprise_magnitude"] = self._safe_float(mag)
-            scores.append(self._sigmoid(self._safe_float(mag), scale=10.0))
-
-        if not scores:
-            return SignalResult(
-                signal_name=self.name,
-                value=0.0,
-                direction="neutral",
-                confidence=0.5,
-                components=components,
-                metadata={"note": "no surprise data on latest quarter"},
-            )
-
-        composite = sum(scores) / len(scores)
-        composite = self._normalize_to_signal(composite)
+        components = {
+            "eps_actual": actual,
+            "eps_estimate": estimate,
+            "eps_surprise_relative": relative,
+        }
 
         if composite > 0.2:
             direction, confidence = "bullish", abs(composite)
@@ -100,8 +91,15 @@ class EarningsSurpriseSignal(BaseSignal):
             direction=direction,
             confidence=confidence,
             components=components,
-            metadata={
-                "report_period": earnings.report_period,
-                "fiscal_period": earnings.fiscal_period,
-            },
+            metadata={"report_period": df.sort_index(ascending=False).index[0].strftime("%Y-%m-%d")},
+        )
+
+    def _neutral(self, note: str) -> SignalResult:
+        return SignalResult(
+            signal_name=self.name,
+            value=0.0,
+            direction="neutral",
+            confidence=0.5,
+            components={},
+            metadata={"note": note},
         )

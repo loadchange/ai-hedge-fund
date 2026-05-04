@@ -11,7 +11,6 @@ from src.graph.state import AgentState
 from src.utils.display import print_trading_output
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.progress import progress
-from src.utils.visualize import save_graph_as_png
 from src.cli.input import (
     parse_cli_inputs,
 )

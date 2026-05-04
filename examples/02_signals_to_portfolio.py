@@ -11,7 +11,6 @@ optimizer doesn't care which one generated it.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -49,7 +48,7 @@ def fetch_returns_panel(tickers: list[str]) -> pd.DataFrame:
     """Pull aligned daily returns for the given tickers."""
     series: dict[str, pd.Series] = {}
     for t in tickers:
-        prices = get_prices(t, START, END, api_key=os.environ.get("FINANCIAL_DATASETS_API_KEY"))
+        prices = get_prices(t, START, END)
         if not prices:
             print(f"  ⚠ no price data for {t}, skipping")
             continue
@@ -66,7 +65,7 @@ def run_signals(tickers: list[str]) -> dict:
         agent_id = f"{sig.name}_signal"
         per_ticker: dict[str, dict] = {}
         for t in tickers:
-            prices = get_prices(t, START, END, api_key=os.environ.get("FINANCIAL_DATASETS_API_KEY"))
+            prices = get_prices(t, START, END)
             if not prices:
                 continue
             df = prices_to_df(prices)
@@ -89,8 +88,8 @@ def main() -> int:
     print(f"Fetching returns panel for {TICKERS} ({START} → {END})…")
     returns = fetch_returns_panel(TICKERS)
     if returns.empty or returns.shape[1] < 2:
-        print("Not enough data to demo the pipeline. Try again later or set "
-              "FINANCIAL_DATASETS_API_KEY.")
+        print("Not enough data to demo the pipeline. Try again later "
+              "(yfinance / akshare may be rate-limiting).")
         return 1
     available = list(returns.columns)
     print(f"  Got {len(returns)} aligned bars across {len(available)} tickers.\n")

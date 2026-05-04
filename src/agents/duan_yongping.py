@@ -30,7 +30,6 @@ from pydantic import BaseModel, Field
 
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 
@@ -49,13 +48,12 @@ def duan_yongping_agent(state: AgentState, agent_id: str = "duan_yongping_agent"
     data = state["data"]
     end_date = data["end_date"]
     tickers = data["tickers"]
-    api_key = get_api_key_from_state(state, "FINANCIAL_DATASETS_API_KEY")
 
     duan_analysis: dict[str, dict] = {}
 
     for ticker in tickers:
         progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=10, api_key=api_key)
+        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=10)
 
         progress.update_status(agent_id, ticker, "Gathering financial line items")
         line_items = search_line_items(
@@ -76,11 +74,10 @@ def duan_yongping_agent(state: AgentState, agent_id: str = "duan_yongping_agent"
             end_date,
             period="ttm",
             limit=10,
-            api_key=api_key,
         )
 
         progress.update_status(agent_id, ticker, "Getting market cap")
-        market_cap = get_market_cap(ticker, end_date, api_key=api_key)
+        market_cap = get_market_cap(ticker, end_date)
 
         progress.update_status(agent_id, ticker, "Analyzing business quality")
         quality = analyze_business_quality(metrics, line_items)

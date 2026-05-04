@@ -19,6 +19,10 @@ class QualitySignal(BaseSignal):
     def name(self) -> str:
         return "quality"
 
+    @property
+    def kind(self) -> str:
+        return "fundamental"
+
     def compute_from_prices(self, prices_df):  # noqa: ARG002
         raise NotImplementedError(
             "QualitySignal requires financial metrics — use compute(ticker, end_date)."

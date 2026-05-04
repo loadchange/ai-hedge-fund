@@ -40,15 +40,8 @@ def call_llm(
         model_name = "gpt-4.1"
         model_provider = "OPENAI"
 
-    # Extract API keys from state if available
-    api_keys = None
-    if state:
-        request = state.get("metadata", {}).get("request")
-        if request and hasattr(request, 'api_keys'):
-            api_keys = request.api_keys
-
     model_info = get_model_info(model_name, model_provider)
-    llm = get_model(model_name, model_provider, api_keys)
+    llm = get_model(model_name, model_provider)
 
     # For non-JSON support models, we can use structured output
     if not (model_info and not model_info.has_json_mode()):
@@ -205,26 +198,17 @@ def _sanitize_reasoning_fields(obj):
 
 
 def get_agent_model_config(state, agent_name):
+    """Get model configuration for *agent_name* from the LangGraph state.
+
+    Reads the global model_name / model_provider that the CLI puts into
+    ``state["metadata"]`` (the agent_name parameter is currently unused
+    but kept for forward-compat so per-agent overrides can be added).
     """
-    Get model configuration for a specific agent from the state.
-    Falls back to global model configuration if agent-specific config is not available.
-    Always returns valid model_name and model_provider values.
-    """
-    request = state.get("metadata", {}).get("request")
-    
-    if request and hasattr(request, 'get_agent_model_config'):
-        # Get agent-specific model configuration
-        model_name, model_provider = request.get_agent_model_config(agent_name)
-        # Ensure we have valid values
-        if model_name and model_provider:
-            return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
-    
-    # Fall back to global configuration (system defaults)
+    del agent_name  # reserved for future per-agent overrides
     model_name = state.get("metadata", {}).get("model_name") or "gpt-4.1"
     model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
-    
-    # Convert enum to string if necessary
-    if hasattr(model_provider, 'value'):
+
+    if hasattr(model_provider, "value"):
         model_provider = model_provider.value
-    
+
     return model_name, model_provider

@@ -1,7 +1,7 @@
 """Pydantic models for the quantitative signal pipeline.
 
-Ported from ``v2/models.py``. These are the data contracts that flow
-between signals → portfolio optimizer → execution.
+These are the data contracts that flow between signals → portfolio
+optimizer → execution.
 """
 
 from __future__ import annotations

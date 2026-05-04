@@ -1,12 +1,12 @@
 # Examples
 
-End-to-end demos that exercise the **non-LLM** modules added by the
-v2→v1 fold-back. None of these scripts call an LLM, so you can run them
-without an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / etc.
+End-to-end demos that exercise the **non-LLM** quantitative modules.
+None of these scripts call an LLM, so you can run them without any
+LLM API key.
 
-The only thing they need is **network access** for price data. Add a
-`FINANCIAL_DATASETS_API_KEY` to `.env` for richer data, or rely on the
-manager's fallbacks (Tencent / yfinance — free, no key).
+The only thing they need is **network access** for price data —
+yfinance / akshare / baostock / tencent are all free and require no
+key.
 
 | File | What it demonstrates |
 |---|---|

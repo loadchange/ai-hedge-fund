@@ -92,7 +92,6 @@ def evaluate_signal(
     n_test_splits: int = 2,
     embargo_pct: float = 0.01,
     rolling_window: int = 60,
-    api_key: str | None = None,
 ) -> dict:
     """Run CPCV on a single signal-ticker pair and return IS/OOS stats + PBO.
 
@@ -112,12 +111,36 @@ def evaluate_signal(
             "deflated_sharpe": float,  # probability the OOS Sharpe is real
         }
     """
-    prices = get_prices(ticker, start_date, end_date, api_key=api_key)
+    if signal_name not in SIGNAL_REGISTRY:
+        return {
+            "signal": signal_name,
+            "ticker": ticker,
+            "error": (
+                f"unknown signal '{signal_name}'; choose from "
+                f"{', '.join(sorted(SIGNAL_REGISTRY))}"
+            ),
+            "error_kind": "unknown_signal",
+        }
+
+    if SIGNAL_REGISTRY[signal_name]().kind != "technical":
+        return {
+            "signal": signal_name,
+            "ticker": ticker,
+            "error": (
+                f"'{signal_name}' is a fundamental signal — CPCV evaluates "
+                "daily-rolling technical signals only. Choose one of: "
+                + ", ".join(sorted(k for k, c in SIGNAL_REGISTRY.items() if c().kind == "technical"))
+            ),
+            "error_kind": "fundamental_signal",
+        }
+
+    prices = get_prices(ticker, start_date, end_date)
     if not prices:
         return {
             "signal": signal_name,
             "ticker": ticker,
             "error": "no price data",
+            "error_kind": "no_data",
         }
 
     df = prices_to_df(prices)
@@ -126,6 +149,10 @@ def evaluate_signal(
             "signal": signal_name,
             "ticker": ticker,
             "error": f"insufficient data ({len(df)} bars; need ≥ {rolling_window * 2})",
+            "error_kind": "insufficient_data",
+            "n_bars_available": len(df),
+            "min_required": rolling_window * 2,
+            "rolling_window": rolling_window,
         }
 
     forward_returns = df["close"].pct_change().shift(-1).fillna(0).to_numpy()

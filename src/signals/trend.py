@@ -20,6 +20,10 @@ class TrendFollowingSignal(BaseSignal):
     def name(self) -> str:
         return "trend"
 
+    @property
+    def kind(self) -> str:
+        return "technical"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:
         ema_8 = calculate_ema(prices_df, 8)
         ema_21 = calculate_ema(prices_df, 21)

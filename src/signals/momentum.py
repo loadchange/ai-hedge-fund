@@ -20,6 +20,10 @@ class MomentumSignal(BaseSignal):
     def name(self) -> str:
         return "momentum"
 
+    @property
+    def kind(self) -> str:
+        return "technical"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:
         returns = prices_df["close"].pct_change()
         mom_1m = returns.rolling(21).sum()

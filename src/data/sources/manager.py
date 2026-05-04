@@ -5,7 +5,6 @@ import time
 from typing import TYPE_CHECKING
 
 from .base import DataSource, classify_ticker
-from .financialsets import FinancialDatasetsSource
 from .yfinance_src import YFinanceSource
 from .akshare_src import AkShareSource
 from .tencent_src import TencentSource
@@ -28,26 +27,29 @@ class DataSourceManager:
 
     def __init__(self):
         self._sources: dict[str, DataSource] = {
-            "financialdatasets": FinancialDatasetsSource(),
             "yfinance": YFinanceSource(),
             "akshare": AkShareSource(),
             "tencent": TencentSource(),
             "baostock": BaostockSource(),
         }
-        # Source priority per market.
-        # CN markets prefer baostock — it returns adjusted OHLCV plus
-        # quarterly fundamentals as structured tables (cleaner than
-        # akshare's Sina/Eastmoney scrape). akshare stays as the
-        # fallback when baostock is unreachable from a given network.
+        # Source priority per market. Free providers only.
+        #
+        # CN priority intentionally ends with yfinance: baostock +
+        # akshare give the cleanest A-share data when reachable, but
+        # they require routes to mainland Chinese servers that
+        # GitHub-hosted runners can't always reach. yfinance pulls
+        # .SS / .SZ tickers from Yahoo's international servers and
+        # works from anywhere — it's the runner-side safety net so
+        # CI never returns "no data" for a valid CN ticker.
         self._price_priority: dict[str, list[str]] = {
-            "us": ["financialdatasets", "tencent", "yfinance", "akshare"],
+            "us": ["yfinance", "akshare"],
             "hk": ["tencent", "yfinance", "akshare"],
-            "cn": ["baostock", "akshare"],
+            "cn": ["baostock", "akshare", "yfinance"],
         }
         self._metrics_priority: dict[str, list[str]] = {
-            "us": ["financialdatasets", "yfinance", "akshare"],
+            "us": ["yfinance", "akshare"],
             "hk": ["akshare", "yfinance"],
-            "cn": ["baostock", "akshare"],
+            "cn": ["baostock", "akshare", "yfinance"],
         }
         # Track rate-limited sources: {source_name: cooldown_until_timestamp}
         self._rate_limited: dict[str, float] = {}

@@ -22,6 +22,10 @@ class VolatilitySignal(BaseSignal):
     def name(self) -> str:
         return "volatility"
 
+    @property
+    def kind(self) -> str:
+        return "technical"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:
         returns = prices_df["close"].pct_change()
         hist_vol = returns.rolling(21).std() * math.sqrt(252)

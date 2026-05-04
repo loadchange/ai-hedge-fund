@@ -11,7 +11,8 @@ backtest behaviour is preserved while quant modules (validation,
 event_study, portfolio optimizer) get a clean per-signal API.
 
 Fundamental signals (value / quality / earnings_surprise) are
-``BaseSignal`` subclasses that pull data directly via ``DataClient``.
+``BaseSignal`` subclasses that pull data via the free providers wired
+through ``src/tools/api.py`` and ``src/data/sources/``.
 """
 
 from __future__ import annotations
@@ -49,6 +50,23 @@ SIGNAL_REGISTRY: dict[str, type[BaseSignal]] = {
     "earnings_surprise": EarningsSurpriseSignal,
 }
 
+
+def signals_by_kind(kind: str) -> list[str]:
+    """Return signal keys whose class declares ``kind``.
+
+    Single source of truth so the issue templates, parse_issue.py, and
+    runner.py never go out of sync about which signals support which
+    evaluation modes.
+    """
+    return [
+        key for key, cls in SIGNAL_REGISTRY.items() if cls().kind == kind
+    ]
+
+
+TECHNICAL_SIGNALS: tuple[str, ...] = tuple(signals_by_kind("technical"))
+FUNDAMENTAL_SIGNALS: tuple[str, ...] = tuple(signals_by_kind("fundamental"))
+
+
 __all__ = [
     "BaseSignal",
     "SignalResult",
@@ -57,6 +75,9 @@ __all__ = [
     "TradeOrder",
     "ExecutionResult",
     "SIGNAL_REGISTRY",
+    "TECHNICAL_SIGNALS",
+    "FUNDAMENTAL_SIGNALS",
+    "signals_by_kind",
     "weighted_signal_combination",
     "TrendFollowingSignal",
     "MeanReversionSignal",

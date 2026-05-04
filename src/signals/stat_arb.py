@@ -20,6 +20,10 @@ class StatArbSignal(BaseSignal):
     def name(self) -> str:
         return "stat_arb"
 
+    @property
+    def kind(self) -> str:
+        return "technical"
+
     def compute_from_prices(self, prices_df: pd.DataFrame) -> SignalResult:
         returns = prices_df["close"].pct_change()
         skew = returns.rolling(63).skew()

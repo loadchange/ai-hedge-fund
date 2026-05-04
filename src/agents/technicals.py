@@ -28,7 +28,6 @@ from src.signals import (
 from src.signals.composite import signal_result_to_legacy
 from src.signals.utils import normalize_pandas, safe_float
 from src.tools.api import get_prices, prices_to_df
-from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
 
 
@@ -58,7 +57,6 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
     start_date = data["start_date"]
     end_date = data["end_date"]
     tickers = data["tickers"]
-    api_key = get_api_key_from_state(state, "FINANCIAL_DATASETS_API_KEY")
 
     technical_analysis: dict[str, dict] = {}
 
@@ -69,7 +67,6 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
-            api_key=api_key,
         )
         if not prices:
             progress.update_status(agent_id, ticker, "Failed: No price data found")

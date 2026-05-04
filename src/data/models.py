@@ -11,74 +11,125 @@ class Price(BaseModel):
     source: str | None = None
 
 
-class PriceResponse(BaseModel):
-    ticker: str
-    prices: list[Price]
-
-
 class FinancialMetrics(BaseModel):
+    """Free providers fill what they can — every numeric field defaults to None.
+
+    Agents must guard for missing data (``if metric.gross_margin is not
+    None: …``) since each free provider exposes a different subset.
+    """
+
     ticker: str
     report_period: str
     period: str
     currency: str
-    market_cap: float | None
-    enterprise_value: float | None
-    price_to_earnings_ratio: float | None
-    price_to_book_ratio: float | None
-    price_to_sales_ratio: float | None
-    enterprise_value_to_ebitda_ratio: float | None
-    enterprise_value_to_revenue_ratio: float | None
-    free_cash_flow_yield: float | None
-    peg_ratio: float | None
-    gross_margin: float | None
-    operating_margin: float | None
-    net_margin: float | None
-    return_on_equity: float | None
-    return_on_assets: float | None
-    return_on_invested_capital: float | None
-    asset_turnover: float | None
-    inventory_turnover: float | None
-    receivables_turnover: float | None
-    days_sales_outstanding: float | None
-    operating_cycle: float | None
-    working_capital_turnover: float | None
-    current_ratio: float | None
-    quick_ratio: float | None
-    cash_ratio: float | None
-    operating_cash_flow_ratio: float | None
-    debt_to_equity: float | None
-    debt_to_assets: float | None
-    interest_coverage: float | None
-    revenue_growth: float | None
-    earnings_growth: float | None
-    book_value_growth: float | None
-    earnings_per_share_growth: float | None
-    free_cash_flow_growth: float | None
-    operating_income_growth: float | None
-    ebitda_growth: float | None
-    payout_ratio: float | None
-    earnings_per_share: float | None
-    book_value_per_share: float | None
-    free_cash_flow_per_share: float | None
+    market_cap: float | None = None
+    enterprise_value: float | None = None
+    price_to_earnings_ratio: float | None = None
+    price_to_book_ratio: float | None = None
+    price_to_sales_ratio: float | None = None
+    enterprise_value_to_ebitda_ratio: float | None = None
+    enterprise_value_to_revenue_ratio: float | None = None
+    free_cash_flow_yield: float | None = None
+    peg_ratio: float | None = None
+    gross_margin: float | None = None
+    operating_margin: float | None = None
+    net_margin: float | None = None
+    return_on_equity: float | None = None
+    return_on_assets: float | None = None
+    return_on_invested_capital: float | None = None
+    asset_turnover: float | None = None
+    inventory_turnover: float | None = None
+    receivables_turnover: float | None = None
+    days_sales_outstanding: float | None = None
+    operating_cycle: float | None = None
+    working_capital_turnover: float | None = None
+    current_ratio: float | None = None
+    quick_ratio: float | None = None
+    cash_ratio: float | None = None
+    operating_cash_flow_ratio: float | None = None
+    debt_to_equity: float | None = None
+    debt_to_assets: float | None = None
+    interest_coverage: float | None = None
+    revenue_growth: float | None = None
+    earnings_growth: float | None = None
+    book_value_growth: float | None = None
+    earnings_per_share_growth: float | None = None
+    free_cash_flow_growth: float | None = None
+    operating_income_growth: float | None = None
+    ebitda_growth: float | None = None
+    payout_ratio: float | None = None
+    earnings_per_share: float | None = None
+    book_value_per_share: float | None = None
+    free_cash_flow_per_share: float | None = None
     source: str | None = None
 
 
-class FinancialMetricsResponse(BaseModel):
-    financial_metrics: list[FinancialMetrics]
-
-
 class LineItem(BaseModel):
+    """One fiscal-period snapshot of a company's reported financials.
+
+    Every numeric column is declared up front and defaults to ``None`` so
+    that any data source (yfinance / akshare / tencent / future sources)
+    can fill the subset it knows about and agents can do
+    ``if item.revenue: …`` on every field without crashing on missing
+    keys.  Treat this as the authoritative LineItem schema — adding a
+    new field here is the right way to expose it to agents.
+    """
+
     ticker: str
     report_period: str
     period: str
     currency: str
 
-    # Allow additional fields dynamically
-    model_config = {"extra": "allow"}
+    # Income statement
+    revenue: float | None = None
+    cost_of_revenue: float | None = None
+    gross_profit: float | None = None
+    operating_income: float | None = None
+    operating_expense: float | None = None
+    research_and_development: float | None = None
+    depreciation_and_amortization: float | None = None
+    interest_expense: float | None = None
+    net_income: float | None = None
+    ebit: float | None = None
+    ebitda: float | None = None
+    earnings_per_share: float | None = None
 
+    # Balance sheet
+    total_assets: float | None = None
+    current_assets: float | None = None
+    cash_and_equivalents: float | None = None
+    inventory: float | None = None
+    accounts_receivable: float | None = None
+    total_liabilities: float | None = None
+    current_liabilities: float | None = None
+    accounts_payable: float | None = None
+    total_debt: float | None = None
+    long_term_debt: float | None = None
+    shareholders_equity: float | None = None
+    outstanding_shares: float | None = None
+    working_capital: float | None = None
+    goodwill_and_intangible_assets: float | None = None
+    intangible_assets: float | None = None
+    book_value_per_share: float | None = None
 
-class LineItemResponse(BaseModel):
-    search_results: list[LineItem]
+    # Cash flow
+    operating_cash_flow: float | None = None
+    operating_cash_flow_per_share: float | None = None
+    capital_expenditure: float | None = None
+    free_cash_flow: float | None = None
+    dividends_and_other_cash_distributions: float | None = None
+    issuance_or_purchase_of_equity_shares: float | None = None
+
+    # Ratios / derived
+    gross_margin: float | None = None
+    operating_margin: float | None = None
+    net_margin: float | None = None
+    debt_to_equity: float | None = None
+    return_on_equity: float | None = None
+    return_on_assets: float | None = None
+    return_on_invested_capital: float | None = None
+
+    source: str | None = None
 
 
 class InsiderTrade(BaseModel):
@@ -97,10 +148,6 @@ class InsiderTrade(BaseModel):
     filing_date: str
 
 
-class InsiderTradeResponse(BaseModel):
-    insider_trades: list[InsiderTrade]
-
-
 class CompanyNews(BaseModel):
     ticker: str
     title: str
@@ -109,121 +156,6 @@ class CompanyNews(BaseModel):
     date: str
     url: str
     sentiment: str | None = None
-
-
-class CompanyNewsResponse(BaseModel):
-    news: list[CompanyNews]
-
-
-class CompanyFacts(BaseModel):
-    ticker: str
-    name: str
-    cik: str | None = None
-    industry: str | None = None
-    sector: str | None = None
-    category: str | None = None
-    exchange: str | None = None
-    is_active: bool | None = None
-    listing_date: str | None = None
-    location: str | None = None
-    market_cap: float | None = None
-    number_of_employees: int | None = None
-    sec_filings_url: str | None = None
-    sic_code: str | None = None
-    sic_industry: str | None = None
-    sic_sector: str | None = None
-    website_url: str | None = None
-    weighted_average_shares: int | None = None
-
-
-class CompanyFactsResponse(BaseModel):
-    company_facts: CompanyFacts
-
-
-class EarningsData(BaseModel):
-    """Financial data for a single earnings period (quarterly or annual).
-
-    Returned as the ``quarterly`` / ``annual`` payload nested inside ``Earnings``.
-    """
-
-    model_config = {"extra": "ignore"}
-
-    # Actuals vs. estimates
-    revenue: float | None = None
-    estimated_revenue: float | None = None
-    revenue_surprise: str | None = None  # "BEAT" | "MISS" | "MEET"
-    earnings_per_share: float | None = None
-    estimated_earnings_per_share: float | None = None
-    eps_surprise: str | None = None
-
-    # Income statement
-    net_income: float | None = None
-    gross_profit: float | None = None
-    operating_income: float | None = None
-    weighted_average_shares: float | None = None
-    weighted_average_shares_diluted: float | None = None
-    free_cash_flow: float | None = None
-
-    # Balance sheet
-    cash_and_equivalents: float | None = None
-    total_debt: float | None = None
-    total_assets: float | None = None
-    total_liabilities: float | None = None
-    shareholders_equity: float | None = None
-
-    # Cash flow
-    net_cash_flow_from_operations: float | None = None
-    capital_expenditure: float | None = None
-    net_cash_flow_from_investing: float | None = None
-    net_cash_flow_from_financing: float | None = None
-    change_in_cash_and_equivalents: float | None = None
-
-    # Period-over-period changes (omitted by API when null)
-    revenue_chg: float | None = None
-    net_income_chg: float | None = None
-    operating_income_chg: float | None = None
-    gross_profit_chg: float | None = None
-    free_cash_flow_chg: float | None = None
-
-
-class Earnings(BaseModel):
-    """Earnings response wrapping a quarterly + annual snapshot per ticker."""
-
-    model_config = {"extra": "ignore"}
-
-    ticker: str
-    report_period: str
-    fiscal_period: str | None = None
-    currency: str | None = None
-    quarterly: EarningsData | None = None
-    annual: EarningsData | None = None
-
-
-class Filing(BaseModel):
-    """SEC filing metadata returned by /filings."""
-
-    model_config = {"extra": "ignore"}
-
-    ticker: str | None = None
-    cik: str | None = None
-    accession_number: str | None = None
-    filing_type: str | None = None
-    filing_date: str | None = None
-    report_period: str | None = None
-    document_count: int | None = None
-    is_xbrl: bool | None = None
-    url: str | None = None
-
-
-class AnalystEstimate(BaseModel):
-    """Single analyst estimate from /analyst-estimates."""
-
-    model_config = {"extra": "ignore"}
-
-    fiscal_period: str | None = None
-    period: str | None = None
-    revenue: float | None = None
-    earnings_per_share: float | None = None
 
 
 class Position(BaseModel):

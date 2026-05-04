@@ -2,17 +2,10 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.data.models import (
-        CompanyFacts,
-        CompanyNews,
-        Earnings,
-        FinancialMetrics,
-        InsiderTrade,
-        Price,
-    )
+    from src.data.models import FinancialMetrics, Price
 
 
 def get_proxy_dict() -> dict[str, str] | None:
@@ -65,16 +58,16 @@ def normalize_ticker(ticker: str, source: str) -> str:
             return f"sh.{code}"
         return ticker
 
-    # yfinance and financialdatasets use standard format.
+    # yfinance uses the standard format.
     return ticker
 
 
 class DataSource(ABC):
-    """Abstract base for all data sources used by ``DataSourceManager``.
+    """Abstract base for free data adapters used by ``DataSourceManager``.
 
-    Multi-source orchestration contract: each adapter (financialdatasets,
-    yfinance, akshare, tencent) implements this so the manager can pick
-    a provider per market and fall back on failure.
+    Each adapter (yfinance, akshare, tencent, baostock) implements this
+    so the manager can pick a provider per market and fall back on
+    failure.
     """
 
     @property
@@ -96,52 +89,3 @@ class DataSource(ABC):
     ) -> list["FinancialMetrics"]:
         """Fetch financial metrics (ROE, margins, etc.)."""
         ...
-
-
-@runtime_checkable
-class DataClient(Protocol):
-    """Protocol for richer single-provider clients (e.g. ``FinancialDatasetsSource``).
-
-    Distinct from ``DataSource`` (which is the multi-source adapter
-    contract): ``DataClient`` exposes the full read-only API of a single
-    provider — quotes, financials, news, insider trades, company facts,
-    earnings — and is consumed by quantitative modules (signals,
-    features, event studies) that talk to one provider at a time.
-
-    Methods return empty lists or ``None`` on failure — never raise.
-    """
-
-    def get_prices(
-        self,
-        ticker: str,
-        start_date: str,
-        end_date: str,
-    ) -> list["Price"]: ...
-
-    def get_financial_metrics(
-        self,
-        ticker: str,
-        end_date: str,
-        period: str = "ttm",
-        limit: int = 10,
-    ) -> list["FinancialMetrics"]: ...
-
-    def get_news(
-        self,
-        ticker: str,
-        end_date: str,
-        start_date: str | None = None,
-        limit: int = 1000,
-    ) -> list["CompanyNews"]: ...
-
-    def get_insider_trades(
-        self,
-        ticker: str,
-        end_date: str,
-        start_date: str | None = None,
-        limit: int = 1000,
-    ) -> list["InsiderTrade"]: ...
-
-    def get_company_facts(self, ticker: str) -> "CompanyFacts | None": ...
-
-    def get_earnings(self, ticker: str) -> "Earnings | None": ...
