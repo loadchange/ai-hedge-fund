@@ -157,7 +157,7 @@ _SCHEMA_VALIDATE = (
     "  Fundamental signals (" + ", ".join(sorted(FUNDAMENTAL_SIGNALS)) + ")\n"
     "  do NOT belong here — pass them through verbatim if the user mentions\n"
     "  them and the validator below will reject with guidance.\n"
-    "- tickers: comma-separated US/CN tickers (e.g. AAPL,MSFT or 600519.SS).\n"
+    "- tickers: comma-separated US/HK/CN tickers (e.g. AAPL, 9988.HK, 600519.SS).\n"
     "- start_date / end_date: YYYY-MM-DD or null.\n"
     "- n_splits (default 8), n_test_splits (default 2), rolling_window (default 60).\n"
     "  Bump rolling_window to 180 if any momentum/volatility-style signal is requested.\n"
