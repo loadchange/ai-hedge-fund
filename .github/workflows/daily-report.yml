@@ -21,6 +21,10 @@ on:
         description: 'Market: cn, hk, or us'
         required: false
         default: 'us'
+      report_date:
+        description: 'Date override (YYYY-MM-DD), leave empty for today'
+        required: false
+        default: ''
 
 permissions:
   issues: write
@@ -29,7 +33,7 @@ permissions:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -66,11 +70,15 @@ jobs:
           MARKET: ${{ steps.market.outputs.market }}
           ICON: ${{ steps.label.outputs.icon }}
           NAME: ${{ steps.label.outputs.name }}
-          DATE: ${{ github.event.repository.updated_at }}
+          INPUT_DATE: ${{ github.event.inputs.report_date }}
         run: |
-          today=$(date -u +%Y-%m-%d)
-          title="${ICON} ${NAME} 日报 / Daily Report — ${today}"
-          body="Automated daily market report for **${NAME}** (${today})."
+          if [[ -n "$INPUT_DATE" ]]; then
+            report_date="$INPUT_DATE"
+          else
+            report_date=$(date -u +%Y-%m-%d)
+          fi
+          title="${ICON} ${NAME} 日报 / Daily Report — ${report_date}"
+          body="Automated daily market report for **${NAME}** (${report_date})."
           issue_url=$(gh issue create --title "$title" --body "$body")
           issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
           echo "number=$issue_number" >> "$GITHUB_OUTPUT"
@@ -89,6 +97,7 @@ jobs:
       - name: Run market report
         env:
           REPORT_MARKET: ${{ steps.market.outputs.market }}
+          REPORT_DATE: ${{ github.event.inputs.report_date }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
           NOTIFY_URLS: ${{ secrets.NOTIFY_URLS }}
