@@ -189,6 +189,67 @@ class AgentStateData(BaseModel):
     ticker_analyses: dict[str, TickerAnalysis]  # ticker -> analysis mapping
 
 
+class ChipDistribution(BaseModel):
+    """A-share chip distribution snapshot (筹码分布)."""
+    ticker: str
+    date: str
+    profit_ratio: float | None = None
+    avg_cost: float | None = None
+    concentration_90: float | None = None
+    concentration_70: float | None = None
+    cost_range_90_low: float | None = None
+    cost_range_90_high: float | None = None
+    cost_range_70_low: float | None = None
+    cost_range_70_high: float | None = None
+    source: str | None = None
+
+
+class CapitalFlowRecord(BaseModel):
+    """A-share daily capital flow (资金流向)."""
+    ticker: str
+    date: str
+    close_price: float | None = None
+    change_pct: float | None = None
+    main_net_inflow: float | None = None
+    main_net_pct: float | None = None
+    super_large_net: float | None = None
+    super_large_pct: float | None = None
+    large_net: float | None = None
+    large_pct: float | None = None
+    medium_net: float | None = None
+    medium_pct: float | None = None
+    small_net: float | None = None
+    small_pct: float | None = None
+    main_net_5d: float | None = None
+    main_net_10d: float | None = None
+    source: str | None = None
+
+
+class SectorRanking(BaseModel):
+    """Industry sector ranking (板块排名)."""
+    sector_name: str
+    change_pct: float | None = None
+    latest_price: float | None = None
+    up_count: int | None = None
+    down_count: int | None = None
+    rank: int | None = None
+    source: str | None = None
+
+
+class DragonTigerRecord(BaseModel):
+    """Dragon Tiger Board (龙虎榜) appearance record."""
+    ticker: str
+    date: str
+    is_on_lhb: bool = False
+    recent_count_30d: int = 0
+    latest_date: str | None = None
+    buy_amount: float | None = None
+    sell_amount: float | None = None
+    net_amount: float | None = None
+    reason: str | None = None
+    source: str | None = None
+
+
 class AgentStateMetadata(BaseModel):
     show_reasoning: bool = False
     model_config = {"extra": "allow"}

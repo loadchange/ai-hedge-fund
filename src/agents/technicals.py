@@ -13,16 +13,20 @@ existing backtests reproduce bit-for-bit.
 from __future__ import annotations
 
 import json
+import os
 
 from langchain_core.messages import HumanMessage
 
+from src.data.sources.base import classify_ticker
 from src.graph.state import AgentState, show_agent_reasoning
 from src.signals import (
     MeanReversionSignal,
     MomentumSignal,
+    PatternSignal,
     StatArbSignal,
     TrendFollowingSignal,
     VolatilitySignal,
+    VolumePriceSignal,
     weighted_signal_combination,
 )
 from src.signals.composite import signal_result_to_legacy
@@ -38,16 +42,20 @@ _TECHNICAL_SIGNALS: dict[str, type] = {
     "momentum": MomentumSignal,
     "volatility": VolatilitySignal,
     "stat_arb": StatArbSignal,
+    "volume_price": VolumePriceSignal,
+    "pattern": PatternSignal,
 }
 
 # Strategy weights — preserved from the historical implementation so the
 # weighted combination output is unchanged.
 _STRATEGY_WEIGHTS = {
-    "trend": 0.25,
-    "mean_reversion": 0.20,
-    "momentum": 0.25,
-    "volatility": 0.15,
-    "stat_arb": 0.15,
+    "trend": 0.20,
+    "mean_reversion": 0.15,
+    "momentum": 0.20,
+    "volatility": 0.12,
+    "stat_arb": 0.12,
+    "volume_price": 0.11,
+    "pattern": 0.10,
 }
 
 
@@ -88,6 +96,8 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
                     "momentum": "Calculating momentum",
                     "volatility": "Analyzing volatility",
                     "stat_arb": "Statistical analysis",
+                    "volume_price": "Analyzing volume-price relationship",
+                    "pattern": "Detecting chart patterns",
                 }.get(strategy, f"Computing {strategy}"),
             )
             result = signal_cls().compute_from_prices(prices_df)
@@ -95,6 +105,33 @@ def technical_analyst_agent(state: AgentState, agent_id: str = "technical_analys
 
         progress.update_status(agent_id, ticker, "Combining signals")
         combined_signal = weighted_signal_combination(legacy_signals, _STRATEGY_WEIGHTS)
+
+        # ── Agent memory calibration (A-share, opt-in) ─────────────────
+        if os.environ.get("ENABLE_AGENT_MEMORY", "0") == "1" and classify_ticker(ticker) == "cn":
+            try:
+                from src.tools.agent_memory import (
+                    adjust_confidence,
+                    backfill_actuals,
+                    compute_calibration_score,
+                    record_analysis,
+                )
+
+                backfill_actuals(ticker, prices_df)
+                cal = compute_calibration_score(ticker)
+                raw_conf = combined_signal["confidence"]
+                adjusted = adjust_confidence(raw_conf, cal)
+                combined_signal["confidence"] = adjusted
+
+                record_analysis(
+                    ticker=ticker,
+                    date=end_date,
+                    signal=combined_signal["signal"],
+                    confidence=adjusted,
+                    value=combined_signal.get("value", 0),
+                    price=float(prices_df["close"].iloc[-1]),
+                )
+            except Exception:
+                pass  # memory is non-critical
 
         technical_analysis[ticker] = {
             "signal": combined_signal["signal"],

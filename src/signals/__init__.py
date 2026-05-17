@@ -36,6 +36,8 @@ from src.signals.stat_arb import StatArbSignal
 from src.signals.value import ValueSignal
 from src.signals.quality import QualitySignal
 from src.signals.earnings_surprise import EarningsSurpriseSignal
+from src.signals.volume_price import VolumePriceSignal
+from src.signals.pattern import PatternSignal
 
 # Registry maps name → class. Useful for CLI / validation runners that
 # look up signals by string identifier.
@@ -48,6 +50,8 @@ SIGNAL_REGISTRY: dict[str, type[BaseSignal]] = {
     "value": ValueSignal,
     "quality": QualitySignal,
     "earnings_surprise": EarningsSurpriseSignal,
+    "volume_price": VolumePriceSignal,
+    "pattern": PatternSignal,
 }
 
 
@@ -87,4 +91,6 @@ __all__ = [
     "ValueSignal",
     "QualitySignal",
     "EarningsSurpriseSignal",
+    "VolumePriceSignal",
+    "PatternSignal",
 ]

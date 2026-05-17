@@ -18,7 +18,14 @@ import pandas as pd
 # cached upstream after the first fetch.
 _AKSHARE_LOCK = threading.Lock()
 
-from src.data.models import FinancialMetrics, Price
+from src.data.models import (
+    CapitalFlowRecord,
+    ChipDistribution,
+    DragonTigerRecord,
+    FinancialMetrics,
+    Price,
+    SectorRanking,
+)
 from .base import DataSource, classify_ticker, get_proxy_dict, normalize_ticker
 
 
@@ -504,3 +511,209 @@ class AkShareSource(DataSource):
         except Exception as e:
             logger.debug("AkShare CN metrics error for %s: %s", ticker, e)
             return []
+
+    # ── A-share specific data dimensions ──────────────────────────────────
+
+    def get_chip_distribution(
+        self, ticker: str, end_date: str, limit: int = 30
+    ) -> list[ChipDistribution]:
+        """Fetch chip distribution (筹码分布) via ak.stock_cyq_em."""
+        if classify_ticker(ticker) != "cn":
+            return []
+        try:
+            code = normalize_ticker(ticker, "akshare").lstrip("shsz")
+            if not code.isdigit() or len(code) != 6:
+                return []
+            with _AKSHARE_LOCK:
+                df = ak.stock_cyq_em(symbol=code)
+            if df is None or df.empty:
+                return []
+            results: list[ChipDistribution] = []
+            for _, row in df.iterrows():
+                date_str = str(row.get("日期", ""))
+                if pd.isna(row.get("日期")) or (end_date and date_str > end_date):
+                    continue
+                cost_90_raw = str(row.get("90%成本", ""))
+                cost_70_raw = str(row.get("70%成本", ""))
+                cost_90_low, cost_90_high = _parse_cost_range(cost_90_raw)
+                cost_70_low, cost_70_high = _parse_cost_range(cost_70_raw)
+                results.append(ChipDistribution(
+                    ticker=ticker,
+                    date=date_str,
+                    profit_ratio=_pct_to_decimal(row.get("获利比例")),
+                    avg_cost=_safe_float(row.get("平均成本")),
+                    concentration_90=_pct_to_decimal(row.get("90集中度")),
+                    concentration_70=_pct_to_decimal(row.get("70集中度")),
+                    cost_range_90_low=_safe_float(row.get("90成本-低")),
+                    cost_range_90_high=_safe_float(row.get("90成本-高")),
+                    cost_range_70_low=_safe_float(row.get("70成本-低")),
+                    cost_range_70_high=_safe_float(row.get("70成本-高")),
+                    source=self.name,
+                ))
+            return results[-limit:]
+        except Exception as e:
+            logger.debug("AkShare chip distribution error for %s: %s", ticker, e)
+            return []
+
+    def get_capital_flow(
+        self, ticker: str, end_date: str, limit: int = 30
+    ) -> list[CapitalFlowRecord]:
+        """Fetch capital flow (资金流向) via ak.stock_individual_fund_flow."""
+        if classify_ticker(ticker) != "cn":
+            return []
+        try:
+            code = normalize_ticker(ticker, "akshare").lstrip("shsz")
+            if not code.isdigit():
+                return []
+            market = "sh" if code.startswith("6") else "sz"
+            with _AKSHARE_LOCK:
+                df = ak.stock_individual_fund_flow(stock=code, market=market)
+            if df is None or df.empty:
+                return []
+            df = df.sort_values("日期").reset_index(drop=True)
+            results: list[CapitalFlowRecord] = []
+            for i, (_, row) in enumerate(df.iterrows()):
+                date_str = str(row.get("日期", ""))
+                if pd.isna(row.get("日期")) or (end_date and date_str > end_date):
+                    continue
+                main_net = _safe_float(row.get("主力净流入-净额"))
+                main_net_5d = None
+                main_net_10d = None
+                if main_net is not None:
+                    if i >= 4:
+                        start_5d = max(0, i - 4)
+                        main_net_5d = sum(
+                            _safe_float(df.iloc[j]["主力净流入-净额"]) or 0
+                            for j in range(start_5d, i + 1)
+                        )
+                    if i >= 9:
+                        start_10d = max(0, i - 9)
+                        main_net_10d = sum(
+                            _safe_float(df.iloc[j]["主力净流入-净额"]) or 0
+                            for j in range(start_10d, i + 1)
+                        )
+                results.append(CapitalFlowRecord(
+                    ticker=ticker,
+                    date=date_str,
+                    close_price=_safe_float(row.get("收盘价")),
+                    change_pct=_safe_float(row.get("涨跌幅")),
+                    main_net_inflow=main_net,
+                    main_net_pct=_safe_float(row.get("主力净流入-净占比")),
+                    super_large_net=_safe_float(row.get("超大单净流入-净额")),
+                    super_large_pct=_safe_float(row.get("超大单净流入-净占比")),
+                    large_net=_safe_float(row.get("大单净流入-净额")),
+                    large_pct=_safe_float(row.get("大单净流入-净占比")),
+                    medium_net=_safe_float(row.get("中单净流入-净额")),
+                    medium_pct=_safe_float(row.get("中单净流入-净占比")),
+                    small_net=_safe_float(row.get("小单净流入-净额")),
+                    small_pct=_safe_float(row.get("小单净流入-净占比")),
+                    main_net_5d=main_net_5d,
+                    main_net_10d=main_net_10d,
+                    source=self.name,
+                ))
+            return results[-limit:]
+        except Exception as e:
+            logger.debug("AkShare capital flow error for %s: %s", ticker, e)
+            return []
+
+    @staticmethod
+    def get_market_fund_flow() -> list[dict]:
+        """Fetch overall market fund flow via ak.stock_market_fund_flow()."""
+        try:
+            with _AKSHARE_LOCK:
+                df = ak.stock_market_fund_flow()
+            if df is None or df.empty:
+                return []
+            return df.tail(5).to_dict("records")
+        except Exception as e:
+            logger.debug("AkShare market fund flow error: %s", e)
+            return []
+
+    @staticmethod
+    def get_sector_rankings(top_n: int = 10, bottom_n: int = 10) -> list[SectorRanking]:
+        """Fetch sector rankings (板块排名) via ak.stock_board_industry_name_em()."""
+        try:
+            with _AKSHARE_LOCK:
+                df = ak.stock_board_industry_name_em()
+            if df is None or df.empty:
+                return []
+            df = df.sort_values("涨跌幅", ascending=False)
+            top = df.head(top_n)
+            bottom = df.tail(bottom_n)
+            results: list[SectorRanking] = []
+            for i, (_, row) in enumerate(top.iterrows()):
+                results.append(SectorRanking(
+                    sector_name=str(row.get("板块名称", "")),
+                    change_pct=_safe_float(row.get("涨跌幅")),
+                    latest_price=_safe_float(row.get("最新价")),
+                    up_count=_safe_float(row.get("上涨家数")),
+                    down_count=_safe_float(row.get("下跌家数")),
+                    rank=i + 1,
+                    source="akshare",
+                ))
+            for i, (_, row) in enumerate(bottom.iterrows()):
+                results.append(SectorRanking(
+                    sector_name=str(row.get("板块名称", "")),
+                    change_pct=_safe_float(row.get("涨跌幅")),
+                    latest_price=_safe_float(row.get("最新价")),
+                    up_count=_safe_float(row.get("上涨家数")),
+                    down_count=_safe_float(row.get("下跌家数")),
+                    rank=len(df) - bottom_n + i + 1,
+                    source="akshare",
+                ))
+            return results
+        except Exception as e:
+            logger.debug("AkShare sector ranking error: %s", e)
+            return []
+
+    def get_dragon_tiger(
+        self, ticker: str, end_date: str, lookback_days: int = 30
+    ) -> list[DragonTigerRecord]:
+        """Fetch Dragon Tiger Board (龙虎榜) appearances via akshare."""
+        if classify_ticker(ticker) != "cn":
+            return []
+        try:
+            code = normalize_ticker(ticker, "akshare").lstrip("shsz")
+            if not code.isdigit():
+                return []
+            with _AKSHARE_LOCK:
+                dates_df = ak.stock_lhb_stock_detail_date_em(symbol=code)
+            if dates_df is None or dates_df.empty:
+                return []
+            from datetime import date as date_type
+            from datetime import timedelta
+
+            end_dt = date_type.fromisoformat(end_date) if end_date else date_type.today()
+            cutoff = end_dt - timedelta(days=lookback_days)
+            recent = dates_df[
+                dates_df["交易日"].apply(lambda d: date_type.fromisoformat(str(d)) > cutoff)
+            ]
+            results: list[DragonTigerRecord] = []
+            for _, row in recent.iterrows():
+                results.append(DragonTigerRecord(
+                    ticker=ticker,
+                    date=str(row.get("交易日", "")),
+                    is_on_lhb=True,
+                    recent_count_30d=len(recent),
+                    latest_date=None,
+                    source=self.name,
+                ))
+            if results:
+                results[-1].latest_date = results[-1].date
+            return results
+        except Exception as e:
+            logger.debug("AkShare dragon tiger error for %s: %s", ticker, e)
+            return []
+
+
+def _parse_cost_range(raw: str) -> tuple[float | None, float | None]:
+    """Parse '45.23-67.89' cost range string into (low, high)."""
+    if not raw or not isinstance(raw, str):
+        return None, None
+    parts = raw.replace("~", "-").split("-")
+    if len(parts) != 2:
+        return None, None
+    try:
+        return float(parts[0].strip()), float(parts[1].strip())
+    except (ValueError, TypeError):
+        return None, None

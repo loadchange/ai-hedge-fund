@@ -9,11 +9,15 @@ from src.data.cache import get_cache
 from src.data.sources import get_data_source_manager
 from src.data.sources.base import classify_ticker, get_proxy_dict
 from src.data.models import (
+    CapitalFlowRecord,
+    ChipDistribution,
     CompanyNews,
+    DragonTigerRecord,
     FinancialMetrics,
-    Price,
-    LineItem,
     InsiderTrade,
+    LineItem,
+    Price,
+    SectorRanking,
 )
 
 # Global cache instance
@@ -471,6 +475,87 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df.sort_index(inplace=True)
     return df
+
+
+def get_chip_distribution(
+    ticker: str,
+    end_date: str,
+    limit: int = 30,
+) -> list[ChipDistribution]:
+    """Fetch chip distribution (筹码分布) for A-share tickers. Returns [] for non-CN."""
+    if classify_ticker(ticker) != "cn":
+        return []
+    cache_key = f"{ticker}_{end_date}"
+    if cached := _cache.get_chip_distribution(cache_key):
+        return [ChipDistribution(**c) for c in cached]
+    manager = get_data_source_manager()
+    source = manager._sources.get("akshare")
+    if source is None:
+        return []
+    results = source.get_chip_distribution(ticker, end_date, limit)
+    if results:
+        _cache.set_chip_distribution(cache_key, [r.model_dump() for r in results])
+    return results
+
+
+def get_capital_flow(
+    ticker: str,
+    end_date: str,
+    limit: int = 30,
+) -> list[CapitalFlowRecord]:
+    """Fetch capital flow (资金流向) for A-share tickers. Returns [] for non-CN."""
+    if classify_ticker(ticker) != "cn":
+        return []
+    cache_key = f"{ticker}_{end_date}"
+    if cached := _cache.get_capital_flow(cache_key):
+        return [CapitalFlowRecord(**c) for c in cached]
+    manager = get_data_source_manager()
+    source = manager._sources.get("akshare")
+    if source is None:
+        return []
+    results = source.get_capital_flow(ticker, end_date, limit)
+    if results:
+        _cache.set_capital_flow(cache_key, [r.model_dump() for r in results])
+    return results
+
+
+def get_sector_rankings(
+    top_n: int = 10,
+    bottom_n: int = 10,
+) -> list[SectorRanking]:
+    """Fetch sector rankings (板块排名). A-share only."""
+    cache_key = f"top{top_n}_bottom{bottom_n}"
+    if cached := _cache.get_sector_rankings(cache_key):
+        return [SectorRanking(**c) for c in cached]
+    manager = get_data_source_manager()
+    source = manager._sources.get("akshare")
+    if source is None:
+        return []
+    results = source.get_sector_rankings(top_n, bottom_n)
+    if results:
+        _cache.set_sector_rankings(cache_key, [r.model_dump() for r in results])
+    return results
+
+
+def get_dragon_tiger(
+    ticker: str,
+    end_date: str,
+    lookback_days: int = 30,
+) -> list[DragonTigerRecord]:
+    """Fetch Dragon Tiger Board (龙虎榜) appearances for A-share tickers. Returns [] for non-CN."""
+    if classify_ticker(ticker) != "cn":
+        return []
+    cache_key = f"{ticker}_{end_date}"
+    if cached := _cache.get_dragon_tiger(cache_key):
+        return [DragonTigerRecord(**c) for c in cached]
+    manager = get_data_source_manager()
+    source = manager._sources.get("akshare")
+    if source is None:
+        return []
+    results = source.get_dragon_tiger(ticker, end_date, lookback_days)
+    if results:
+        _cache.set_dragon_tiger(cache_key, [r.model_dump() for r in results])
+    return results
 
 
 def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:

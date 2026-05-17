@@ -7,6 +7,10 @@ class Cache:
         self._line_items_cache: dict[str, list[dict[str, any]]] = {}
         self._insider_trades_cache: dict[str, list[dict[str, any]]] = {}
         self._company_news_cache: dict[str, list[dict[str, any]]] = {}
+        self._chip_distribution_cache: dict[str, list[dict[str, any]]] = {}
+        self._capital_flow_cache: dict[str, list[dict[str, any]]] = {}
+        self._sector_rankings_cache: dict[str, list[dict[str, any]]] = {}
+        self._dragon_tiger_cache: dict[str, list[dict[str, any]]] = {}
 
     def _merge_data(self, existing: list[dict] | None, new_data: list[dict], key_field: str) -> list[dict]:
         """Merge existing and new data, avoiding duplicates based on a key field."""
@@ -60,6 +64,33 @@ class Cache:
     def set_company_news(self, ticker: str, data: list[dict[str, any]]):
         """Append new company news to cache."""
         self._company_news_cache[ticker] = self._merge_data(self._company_news_cache.get(ticker), data, key_field="date")
+
+    def get_chip_distribution(self, ticker: str) -> list[dict[str, any]] | None:
+        return self._chip_distribution_cache.get(ticker)
+
+    def set_chip_distribution(self, ticker: str, data: list[dict[str, any]]):
+        self._chip_distribution_cache[ticker] = self._merge_data(
+            self._chip_distribution_cache.get(ticker), data, key_field="date")
+
+    def get_capital_flow(self, ticker: str) -> list[dict[str, any]] | None:
+        return self._capital_flow_cache.get(ticker)
+
+    def set_capital_flow(self, ticker: str, data: list[dict[str, any]]):
+        self._capital_flow_cache[ticker] = self._merge_data(
+            self._capital_flow_cache.get(ticker), data, key_field="date")
+
+    def get_sector_rankings(self, key: str) -> list[dict[str, any]] | None:
+        return self._sector_rankings_cache.get(key)
+
+    def set_sector_rankings(self, key: str, data: list[dict[str, any]]):
+        self._sector_rankings_cache[key] = data
+
+    def get_dragon_tiger(self, ticker: str) -> list[dict[str, any]] | None:
+        return self._dragon_tiger_cache.get(ticker)
+
+    def set_dragon_tiger(self, ticker: str, data: list[dict[str, any]]):
+        self._dragon_tiger_cache[ticker] = self._merge_data(
+            self._dragon_tiger_cache.get(ticker), data, key_field="date")
 
 
 # Global cache instance
