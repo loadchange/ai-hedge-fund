@@ -1,0 +1,135 @@
+name: Daily Market Report
+
+# Runs on each trading day for CN / HK / US markets.
+# 1. Creates a GitHub issue
+# 2. Runs market_review + technical_analyst on major indices
+# 3. Replies with dashboard Markdown
+# 4. Sends notification via Apprise
+# 5. Closes the issue
+
+on:
+  schedule:
+    # CN market: 3:45 PM Beijing (07:45 UTC) on weekdays
+    - cron: '45 7 * * 1-5'
+    # HK market: 4:47 PM Hong Kong (08:47 UTC) on weekdays
+    - cron: '47 8 * * 1-5'
+    # US market: 4:53 PM ET ≈ 21:53 UTC (covers both EST/EDT safely)
+    - cron: '53 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      market:
+        description: 'Market: cn, hk, or us'
+        required: false
+        default: 'us'
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine market
+        id: market
+        run: |
+          if [[ -n "${{ github.event.inputs.market }}" ]]; then
+            echo "market=${{ github.event.inputs.market }}" >> "$GITHUB_OUTPUT"
+          else
+            case "${{ github.event.schedule }}" in
+              "45 7 * * 1-5")  echo "market=cn" >> "$GITHUB_OUTPUT" ;;
+              "47 8 * * 1-5")  echo "market=hk" >> "$GITHUB_OUTPUT" ;;
+              "53 21 * * 1-5") echo "market=us" >> "$GITHUB_OUTPUT" ;;
+              *)                echo "market=cn" >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
+      - name: Set market label
+        id: label
+        env:
+          MARKET: ${{ steps.market.outputs.market }}
+        run: |
+          case "$MARKET" in
+            cn) echo "name=中国A股" >> "$GITHUB_OUTPUT"; echo "icon=🇨🇳" >> "$GITHUB_OUTPUT" ;;
+            hk) echo "name=港股"   >> "$GITHUB_OUTPUT"; echo "icon=🇭🇰" >> "$GITHUB_OUTPUT" ;;
+            us) echo "name=美股"   >> "$GITHUB_OUTPUT"; echo "icon=🇺🇸" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Create report issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKET: ${{ steps.market.outputs.market }}
+          ICON: ${{ steps.label.outputs.icon }}
+          NAME: ${{ steps.label.outputs.name }}
+          DATE: ${{ github.event.repository.updated_at }}
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          title="${ICON} ${NAME} 日报 / Daily Report — ${today}"
+          body="Automated daily market report for **${NAME}** (${today})."
+          issue_url=$(gh issue create --title "$title" --body "$body")
+          issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
+          echo "number=$issue_number" >> "$GITHUB_OUTPUT"
+          echo "url=$issue_url" >> "$GITHUB_OUTPUT"
+          echo "Created issue #$issue_number: $title"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Setup Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run market report
+        env:
+          REPORT_MARKET: ${{ steps.market.outputs.market }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+          NOTIFY_URLS: ${{ secrets.NOTIFY_URLS }}
+          PYTHONIOENCODING: utf-8
+          NO_COLOR: "1"
+        run: uv run python .github/scripts/daily_report.py
+
+      - name: Check skip
+        id: skip
+        run: |
+          if head -1 comment.md | grep -q 'skip'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reply with report and close issue
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ steps.issue.outputs.number }}
+        run: |
+          gh issue comment "$ISSUE" --body-file comment.md
+          gh issue close "$ISSUE" --comment "📊 日报已完成 / Daily report complete."
+
+      - name: Close issue (non-trading day)
+        if: steps.skip.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ steps.issue.outputs.number }}
+        run: |
+          gh issue close "$ISSUE" --comment "⏭️ 今日非交易日，跳过 / Not a trading day, skipped."
+
+      - name: Upload artifacts
+        if: always() && steps.skip.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ steps.market.outputs.market }}-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            comment.md
+            result.json

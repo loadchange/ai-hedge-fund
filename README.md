@@ -8,20 +8,13 @@ ticker.
 Markets: **US, Hong Kong, China A-share** (Shanghai + Shenzhen).
 Output: **English / Simplified Chinese**.
 
-<a href="https://platform.xiaomimimo.com/token-plan" target="_blank" rel="noopener">
-  <img width="320" src="https://github.com/user-attachments/assets/3a264c9b-48a0-44d2-935c-e3237181668a" alt="Xiaomi MiMo v2.5 Pro" />
-</a>
-
-**Powered by [Xiaomi MiMo v2.5 Pro](https://platform.xiaomimimo.com/token-plan).**
-New users get **$2** free credit with invite code **`FU5PSQ`**.
-
 > **Disclaimer.** Educational / research only. No real trades, no
 > investment advice, past performance ≠ future results.
 
 ## Architecture
 
 ```
-   CLI · Issue bot
+   CLI · Issue bot · Daily Report (cron)
         │
    DataSourceManager  (US: yfinance→akshare · HK: tencent/yfinance/akshare
         │             · CN: baostock/akshare/tencent)
@@ -33,11 +26,16 @@ New users get **$2** free credit with invite code **`FU5PSQ`**.
         │                        quality · earnings_surprise
         └────────────┬───────────┘
                      ▼
+          Market Review (rule-based)
+          SPY · QQQ · 000300.SS · ^HSI
+                     ▼
           Risk manager → Portfolio manager
           (vol / corr / drawdown caps; optional
           cvxpy MVO · risk parity · Black-Litt.)
                      ▼
           BUY / SELL / HOLD / SHORT  (10 bps default cost)
+                     ▼
+          Dashboard Report → Notification (Lark/Telegram/Discord/Slack/…)
                      ▼
           Backtester · Validation (CPCV + PBO + Deflated Sharpe)
 ```
@@ -45,8 +43,11 @@ New users get **$2** free credit with invite code **`FU5PSQ`**.
 ## Table of contents
 
 - [Install](#install) · [Run](#run) · [Issue bot](#issue-bot) ·
+  [Daily market report](#daily-market-report) ·
   [Agent roster](#agent-roster) · [Quantitative modules](#quantitative-modules)
 - [Markets & data sources](#markets--data-sources) ·
+  [Strategies](#strategies) ·
+  [Notifications](#notifications) ·
   [Internationalisation](#internationalisation) ·
   [Examples](#examples)
 - [Acknowledgements](#acknowledgements) · [License](#license)
@@ -68,11 +69,11 @@ no paid provider required.
 
 ```bash
 # 1. Hedge fund — single-day multi-agent decision
-uv run python src/main.py --tickers AAPL,MSFT --model mimo-v2.5-pro \
+uv run python src/main.py --tickers AAPL,MSFT --model deepseek-v4-flash \
   --analysts warren_buffett,duan_yongping --lang zhCN  # or --ollama
 
 # 2. Backtester — re-runs the workflow per business day
-uv run python src/backtester.py --tickers AAPL --model mimo-v2.5-pro \
+uv run python src/backtester.py --tickers AAPL --model deepseek-v4-flash \
   --start-date 2025-01-01 --end-date 2025-02-01 \
   --analysts warren_buffett,duan_yongping
 # --cost-model {fixed,spread}  --cost-bps N  (default fixed 10 bps)
@@ -89,6 +90,7 @@ uv run python -m src.validation.cli evaluate \
 | Command | LLM? |
 |---|---|
 | `src/main.py` | yes — one call per persona × ticker + portfolio mgr |
+| `src/main.py --analysts market_review,technical_analyst` | no — rule-based only |
 | `src/backtester.py` | yes per business day |
 | `python -m src.validation.cli evaluate` | no — pure CPCV/PBO |
 | `from src.{signals,risk,portfolio,validation,event_study,features}` | no — quant modules are LLM-free |
@@ -100,6 +102,9 @@ turns issues into runnable jobs: open from a template → bot replies
 with Markdown → issue auto-closes. Subscribers get email notifications
 via GitHub's native flow.
 
+> **Restricted to repo owner only.** Non-owners receive a polite reply
+> pointing them to fork the repo and self-deploy.
+
 | Mode | Label | LLM | Output |
 |---|---|---|---|
 | Ticker analysis | `bot-ticker` | yes | Single-day BUY/SELL/HOLD/SHORT per ticker |
@@ -107,19 +112,27 @@ via GitHub's native flow.
 | Signal validation | `bot-validate` | no | CPCV IS/OOS Sharpe + PBO + DSR |
 | Event study | `bot-event-study` | no | Market-model α/β + AR/CAR + t-stat |
 
-**Lifecycle**: pick template → fill body free-form (LLM extracts args)
-→ submit → ack within seconds → final reply 30 s – 5 min → auto-close.
-Don't like it? Edit the body to retrigger.
-
-**Failure replies are bilingual + actionable**: missing fields get an
-example body; `ticker` / `backtester` over the **400-LLM-call cap**
-(matched to the 60-min workflow timeout at ~9 s/call) get a full
-breakdown plus a parameter-combo table that *would* fit; fundamental
-signals on `bot-validate` (CPCV is daily-rolling) are redirected to
-the five technical signals.
-
 **Required repo secrets**: `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`
 (must exist in [`src/llm/api_models.json`](src/llm/api_models.json)).
+
+## Daily market report
+
+The [`Daily Market Report`](.github/workflows/daily-report.yml) workflow
+runs automatically on each trading day, creates a GitHub issue, runs
+index analysis for CN/HK/US markets, and pushes a notification.
+
+| Market | Trigger time | Indices |
+|---|---|---|
+| China A-share | 3:45 PM Beijing | 000300.SS, 000001.SS, ^HSI, SPY, QQQ |
+| Hong Kong | 4:47 PM Hong Kong | ^HSI, 000300.SS, SPY, QQQ |
+| US | ~4:53 PM ET | SPY, QQQ, DIA, IWM, 000300.SS, ^HSI |
+
+The workflow uses `market_review` + `technical_analyst` (both rule-based,
+no LLM cost) and sends results via the configured notification channel
+(Apprise).
+
+**Required repo secrets**: `NOTIFY_URLS` (Apprise URL, e.g.
+`lark://webhook_token`).
 
 ## Agent roster
 
@@ -135,6 +148,9 @@ free text — the LLM extracts.
 **Generic analysts**: `valuation_analyst` · `sentiment_analyst` ·
 `news_sentiment_analyst` · `fundamentals_analyst` · `growth_analyst` ·
 `technical_analyst` (delegates to `src/signals/`, **no LLM**).
+
+**Market overview**: `market_review` (rule-based, **no LLM** — analyzes
+SPY, QQQ, 000300.SS, ^HSI for macro context).
 
 **Decision layer** (always on): `risk_management_agent` (no LLM, sets
 position limits from vol/correlation), `portfolio_manager` (LLM, final
@@ -153,10 +169,6 @@ Six standalone packages, importable without LangGraph:
 | [`src/event_study/`](src/event_study/) | Market-model α/β fit, AR / CAR / CAAR, t-test + Wilcoxon |
 | [`src/features/`](src/features/) | SUE, PEAD drift, KPI YoY z-scores, lead-lag, Granger causality |
 
-Persona agents and quant modules **work side-by-side**: the same
-`analyst_signals` payload feeds Black-Litterman views or
-`src.validation` for OOS-robustness checks.
-
 ## Markets & data sources
 
 [`classify_ticker`](src/data/sources/base.py) routes by suffix: US
@@ -170,12 +182,40 @@ Persona agents and quant modules **work side-by-side**: the same
 | `baostock` | CN adjusted OHLCV + structured quarterly fundamentals |
 | `tencent` | CN / HK realtime quotes (market-cap, PE, PB) |
 
-[`DataSourceManager`](src/data/sources/manager.py) does priority
-routing, fallback, 5-minute rate-limit cooldowns, and price
-cross-validation (warns on >2% disagreement).
-[`src/tools/api.py`](src/tools/api.py) is the unified surface
-(`get_prices`, `get_financial_metrics`, `search_line_items`,
-`get_company_news`, `get_market_cap`, `get_insider_trades`).
+## Strategies
+
+Six built-in strategy presets in [`src/strategies/defaults/`](src/strategies/defaults/):
+
+| Strategy | Key | Focus |
+|---|---|---|
+| Momentum / Trend | `momentum_trend` | Technical trend-following (default) |
+| Deep Value | `value_deep` | Buffett / Graham / Fisher, margin of safety |
+| Contrarian | `contrarian` | Burry / Taleb, mean reversion |
+| Growth / Disruption | `growth_disrupt` | Cathie Wood, momentum-heavy |
+| Macro-Aware | `macro_aware` | Market review + balanced |
+| A-Share (CN) | `cn_a_share` | Duan Yongping, baostock/akshare optimized |
+
+```bash
+uv run python src/main.py --tickers 600519.SS --strategy cn_a_share --lang zhCN
+```
+
+## Notifications
+
+Multi-channel notifications via [Apprise](https://github.com/caronc/apprise).
+Set `NOTIFY_URLS` in `.env` (one URL per line):
+
+```bash
+NOTIFY_URLS=lark://webhook_token
+# NOTIFY_URLS=feishu://webhook_token
+# NOTIFY_URLS=tgram://bottoken/chat_id
+# NOTIFY_URLS=discord://webhook_id/webhook_token
+# NOTIFY_URLS=slack://tokenA/tokenB/tokenC
+# NOTIFY_URLS=mailto://user:pass@smtp.example.com/to@example.com
+```
+
+```bash
+uv run python src/main.py --tickers AAPL --notify   # send after analysis
+```
 
 ## Internationalisation
 

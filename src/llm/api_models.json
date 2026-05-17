@@ -1,10 +1,5 @@
 [
   {
-    "display_name": "MiMo v2.5 Pro",
-    "model_name": "mimo-v2.5-pro",
-    "provider": "OpenAI"
-  },
-  {
     "display_name": "Grok 4",
     "model_name": "grok-4-0709",
     "provider": "xAI"
