@@ -1,0 +1,36 @@
+name: momentum_trend
+display_name: Momentum / Trend Following
+description: Default strategy focused on technical trend and momentum signals. Best for trending markets.
+category: technical
+agents:
+  - agent_key: market_review
+    weight: 1.0
+  - agent_key: technical_analyst
+    weight: 1.5
+  - agent_key: growth_analyst
+    weight: 1.0
+  - agent_key: news_sentiment_analyst
+    weight: 0.8
+  - agent_key: sentiment_analyst
+    weight: 0.8
+  - agent_key: stanley_druckenmiller
+    weight: 1.2
+  - agent_key: cathie_wood
+    weight: 0.8
+  - agent_key: peter_lynch
+    weight: 0.8
+signal_weights:
+  trend: 0.35
+  momentum: 0.30
+  mean_reversion: 0.10
+  volatility: 0.15
+  stat_arb: 0.10
+scoring:
+  signal_threshold_bullish: 0.15
+  signal_threshold_bearish: -0.15
+  confidence_cap: null
+  risk_multiplier: 1.0
+instructions: |
+  Focus on momentum and trend-following opportunities.
+  Prefer stocks with strong upward trends and positive momentum.
+  Use moving average crossovers and momentum indicators as primary signals.

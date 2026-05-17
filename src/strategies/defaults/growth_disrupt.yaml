@@ -1,0 +1,34 @@
+name: growth_disrupt
+display_name: Growth / Disruption
+description: Growth-focused strategy targeting disruptive innovation and high-growth sectors. Emphasizes momentum and news sentiment.
+category: fundamental
+agents:
+  - agent_key: market_review
+    weight: 1.0
+  - agent_key: cathie_wood
+    weight: 1.5
+  - agent_key: peter_lynch
+    weight: 1.2
+  - agent_key: stanley_druckenmiller
+    weight: 1.0
+  - agent_key: growth_analyst
+    weight: 1.5
+  - agent_key: news_sentiment_analyst
+    weight: 1.2
+  - agent_key: technical_analyst
+    weight: 0.8
+signal_weights:
+  trend: 0.25
+  momentum: 0.35
+  mean_reversion: 0.05
+  volatility: 0.15
+  stat_arb: 0.20
+scoring:
+  signal_threshold_bullish: 0.10
+  signal_threshold_bearish: -0.20
+  confidence_cap: null
+  risk_multiplier: 1.2
+instructions: |
+  Focus on companies with strong growth trajectories and disruptive potential.
+  Prioritize revenue growth, market expansion, and innovation leadership.
+  Accept higher volatility in exchange for asymmetric upside potential.

@@ -1,0 +1,38 @@
+name: value_deep
+display_name: Deep Value Investing
+description: Value investing strategy emphasizing fundamental analysis, margin of safety, and intrinsic value. Best for identifying undervalued stocks.
+category: fundamental
+agents:
+  - agent_key: market_review
+    weight: 0.8
+  - agent_key: warren_buffett
+    weight: 1.5
+  - agent_key: charlie_munger
+    weight: 1.3
+  - agent_key: ben_graham
+    weight: 1.5
+  - agent_key: phil_fisher
+    weight: 1.2
+  - agent_key: aswath_damodaran
+    weight: 1.2
+  - agent_key: fundamentals_analyst
+    weight: 1.3
+  - agent_key: valuation_analyst
+    weight: 1.5
+  - agent_key: duan_yongping
+    weight: 1.0
+signal_weights:
+  trend: 0.10
+  momentum: 0.10
+  mean_reversion: 0.25
+  volatility: 0.15
+  stat_arb: 0.40
+scoring:
+  signal_threshold_bullish: 0.25
+  signal_threshold_bearish: -0.10
+  confidence_cap: null
+  risk_multiplier: 0.8
+instructions: |
+  Focus on deep value: margin of safety, intrinsic value, and financial health.
+  Prefer stocks trading below intrinsic value with strong balance sheets.
+  Avoid speculative or overvalued names regardless of momentum.

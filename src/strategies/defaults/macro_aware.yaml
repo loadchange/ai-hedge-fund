@@ -1,0 +1,37 @@
+name: macro_aware
+display_name: Macro-Aware Balanced
+description: Balanced strategy using market review as primary input. Weighs macro conditions alongside individual stock analysis for all markets.
+category: hybrid
+agents:
+  - agent_key: market_review
+    weight: 1.5
+  - agent_key: stanley_druckenmiller
+    weight: 1.3
+  - agent_key: warren_buffett
+    weight: 1.0
+  - agent_key: technical_analyst
+    weight: 1.0
+  - agent_key: fundamentals_analyst
+    weight: 1.0
+  - agent_key: news_sentiment_analyst
+    weight: 1.0
+  - agent_key: valuation_analyst
+    weight: 0.8
+  - agent_key: duan_yongping
+    weight: 1.0
+signal_weights:
+  trend: 0.25
+  momentum: 0.20
+  mean_reversion: 0.20
+  volatility: 0.15
+  stat_arb: 0.20
+scoring:
+  signal_threshold_bullish: 0.20
+  signal_threshold_bearish: -0.20
+  confidence_cap: null
+  risk_multiplier: 1.0
+instructions: |
+  Balance macro market conditions with individual stock analysis.
+  Use market index trends to set overall risk posture.
+  In bearish macro environments, require higher conviction for buy decisions.
+  In bullish macro environments, accept moderate risk for growth opportunities.

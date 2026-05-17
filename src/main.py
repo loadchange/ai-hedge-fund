@@ -14,6 +14,8 @@ from src.utils.progress import progress
 from src.cli.input import (
     parse_cli_inputs,
 )
+from src.notifications import get_notification_manager, NotificationMessage
+from src.report.dashboard import DashboardReport
 
 import argparse
 from datetime import datetime
@@ -176,3 +178,21 @@ if __name__ == "__main__":
         model_provider=inputs.model_provider,
     )
     print_trading_output(result)
+
+    # Send notification if --notify flag is set
+    if getattr(inputs, "notify", False):
+        nm = get_notification_manager()
+        if nm.url_count > 0:
+            report = DashboardReport(result)
+            md = report.render_markdown()
+            msg = NotificationMessage(
+                title="AI Hedge Fund Analysis",
+                body=md,
+            )
+            ok = nm.send(msg)
+            if ok:
+                print(f"\n{Fore.GREEN}Notification sent to {nm.url_count} channel(s).{Style.RESET_ALL}")
+            else:
+                print(f"\n{Fore.YELLOW}Notification failed.{Style.RESET_ALL}")
+        else:
+            print(f"\n{Fore.YELLOW}--notify set but no channels configured (NOTIFY_URLS empty).{Style.RESET_ALL}")

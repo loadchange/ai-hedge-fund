@@ -45,6 +45,11 @@
     "provider": "DeepSeek"
   },
   {
+    "display_name": "DeepSeek V4 Flash",
+    "model_name": "deepseek-v4-flash",
+    "provider": "DeepSeek"
+  },
+  {
     "display_name": "Kimi K2",
     "model_name": "kimi-k2-0905-preview",
     "provider": "Kimi"

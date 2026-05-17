@@ -1,0 +1,32 @@
+name: contrarian
+display_name: Contrarian / Mean Reversion
+description: Contrarian strategy seeking oversold or overhyped stocks. Relies on mean reversion signals and negative sentiment as opportunity indicators.
+category: technical
+agents:
+  - agent_key: market_review
+    weight: 1.0
+  - agent_key: michael_burry
+    weight: 1.5
+  - agent_key: nassim_taleb
+    weight: 1.3
+  - agent_key: technical_analyst
+    weight: 1.2
+  - agent_key: sentiment_analyst
+    weight: 1.3
+  - agent_key: fundamentals_analyst
+    weight: 1.0
+signal_weights:
+  trend: 0.10
+  momentum: 0.15
+  mean_reversion: 0.40
+  volatility: 0.20
+  stat_arb: 0.15
+scoring:
+  signal_threshold_bullish: 0.30
+  signal_threshold_bearish: -0.30
+  confidence_cap: 80
+  risk_multiplier: 1.3
+instructions: |
+  Look for contrarian opportunities: extreme pessimism as buy signals, extreme optimism as sell signals.
+  Focus on mean reversion indicators and RSI oversold/overbought levels.
+  Consider tail risk and black swan events. Prefer asymmetric payoff profiles.

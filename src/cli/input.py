@@ -43,6 +43,36 @@ def add_common_args(
         parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
     parser.add_argument("--model", type=str, required=False, help="Model name to use (e.g., gpt-4o)")
     parser.add_argument("--lang", type=str, default="en", choices=["en", "zhCN"], help="Language for output (en, zhCN)")
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        required=False,
+        help="Strategy name (e.g., momentum_trend, value_deep, contrarian, growth_disrupt, macro_aware, cn_a_share)",
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        default="table",
+        choices=["table", "dashboard", "markdown", "json"],
+        help="Output format: table (default), dashboard, markdown, or json",
+    )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send results via configured notification channels",
+    )
+    parser.add_argument(
+        "--schedule",
+        type=str,
+        required=False,
+        help="Cron-like schedule for daily analysis (e.g., '30 9 * * 1-5' for weekdays 9:30)",
+    )
+    parser.add_argument(
+        "--watch",
+        type=int,
+        required=False,
+        help="Re-run analysis every N minutes during market hours",
+    )
     return parser
 
 
@@ -226,6 +256,11 @@ class CLIInputs:
     lang: str = "en"
     cost_bps: float = 10.0
     cost_model: str = "fixed"
+    strategy_name: Optional[str] = None
+    output_format: str = "table"
+    notify: bool = False
+    schedule: Optional[str] = None
+    watch: Optional[int] = None
     raw_args: Optional[argparse.Namespace] = None
 
 
@@ -309,6 +344,11 @@ def parse_cli_inputs(
         lang=getattr(args, "lang", "en"),
         cost_bps=getattr(args, "cost_bps", 10.0),
         cost_model=getattr(args, "cost_model", "fixed"),
+        strategy_name=getattr(args, "strategy", None),
+        output_format=getattr(args, "format", "table"),
+        notify=getattr(args, "notify", False),
+        schedule=getattr(args, "schedule", None),
+        watch=getattr(args, "watch", None),
         raw_args=args,
     )
 

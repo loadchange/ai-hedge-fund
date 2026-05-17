@@ -21,9 +21,18 @@ from src.agents.mohnish_pabrai import mohnish_pabrai_agent
 from src.agents.nassim_taleb import nassim_taleb_agent
 from src.agents.news_sentiment import news_sentiment_agent
 from src.agents.growth_agent import growth_analyst_agent
+from src.agents.market_review import market_review_agent
 
 # Define analyst configuration - single source of truth
 ANALYST_CONFIG = {
+    "market_review": {
+        "display_name": "Market Review",
+        "description": "Macro Market Analyst",
+        "investing_style": "Analyzes major market indices (S&P 500, CSI 300, HSI) to provide macro-level context for trading decisions. Computes trend, volatility, and momentum signals across markets.",
+        "agent_func": market_review_agent,
+        "type": "analyst",
+        "order": -1,
+    },
     "aswath_damodaran": {
         "display_name": "Aswath Damodaran",
         "description": "The Dean of Valuation",

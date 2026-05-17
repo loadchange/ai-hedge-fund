@@ -122,6 +122,7 @@ STATUS_MESSAGES = {
 # Agent display name translations
 AGENT_NAMES = {
     "zhCN": {
+        "Market Review": "大盘复盘",
         "Aswath Damodaran": "阿斯瓦斯·达莫达兰",
         "Ben Graham": "本杰明·格雷厄姆",
         "Bill Ackman": "比尔·阿克曼",
