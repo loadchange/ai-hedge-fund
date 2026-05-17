@@ -24,6 +24,7 @@ Output: **English / Simplified Chinese**.
    (LangGraph; Buffett /         trend · mean_reversion · momentum
    Munger / Wood / …)            volatility · stat_arb · value
         │                        quality · earnings_surprise
+        │                        volume_price · pattern  ← new
         └────────────┬───────────┘
                      ▼
           Market Review (rule-based)
@@ -162,7 +163,10 @@ Six standalone packages, importable without LangGraph:
 
 | Module | Purpose |
 |---|---|
-| [`src/signals/`](src/signals/) | `BaseSignal` ABC + 8 signals (5 technical / 3 fundamental); `SignalResult` ∈ `[-1, +1]` |
+| [`src/signals/`](src/signals/) | `BaseSignal` ABC + 10 signals (7 technical / 3 fundamental); `SignalResult` ∈ `[-1, +1]` |
+|---|---|
+| [`src/data/`](src/data/) | Multi-market data models: `ChipDistribution` · `CapitalFlowRecord` · `SectorRanking` · `DragonTigerRecord` |
+| [`src/tools/`](src/tools/) | High-level APIs: `get_chip_distribution()` · `get_capital_flow()` · `get_sector_rankings()` · `get_dragon_tiger()` · `agent_memory` |
 | [`src/risk/`](src/risk/) | Vol / correlation, drawdown, scenario stress (2008/2020/2022/2025), Kelly + vol-targeted sizing |
 | [`src/portfolio/`](src/portfolio/) | cvxpy optimizers (MVO / risk parity / Black-Litterman), Ledoit-Wolf shrinkage, MP eigenvalue cleaning |
 | [`src/validation/`](src/validation/) | CPCV + PBO + Deflated Sharpe + CLI |
@@ -178,9 +182,37 @@ Six standalone packages, importable without LangGraph:
 | Source | Coverage |
 |---|---|
 | `yfinance` | US / HK / CN prices + financials + news + line items + earnings dates |
-| `akshare` | US / HK / CN prices + financials (Sina / Eastmoney upstream) |
+| `akshare` | US / HK / CN prices + financials + chip distribution + capital flow + sector rankings + dragon tiger board |
 | `baostock` | CN adjusted OHLCV + structured quarterly fundamentals |
 | `tencent` | CN / HK realtime quotes (market-cap, PE, PB) |
+
+### A-share specific data (资金流/筹码/板块/龙虎榜)
+
+Four additional data dimensions sourced from Eastmoney via akshare,
+available through `src/tools/api.py` high-level functions:
+
+| API | Function | Coverage |
+|---|---|---|
+| Chip distribution | `get_chip_distribution(ticker, end_date)` | Profit ratio, 90%/70% concentration, cost range |
+| Capital flow | `get_capital_flow(ticker, end_date)` | Main/super-large/large/medium/small fund flow, 5d/10d aggregate |
+| Sector rankings | `get_sector_rankings(top_n, bottom_n)` | Industry sector by change %, up/down count |
+| Dragon tiger board | `get_dragon_tiger(ticker, end_date)` | LHB appearance count, latest date, buy/sell amounts |
+
+### New technical signals
+
+Two new signals added to the `technical_analyst_agent` pipeline:
+
+| Signal | Name | Logic |
+|---|---|---|
+| `volume_price` | Volume-Price Analysis | Volume ratio (5d/20d), up/down day volume comparison, volume trend, volume-price correlation, pattern detection (alignment vs divergence) |
+| `pattern` | Chart Pattern Recognition | Candlestick patterns (Doji, Hammer, Shooting Star, Morning/Evening Star, Engulfing), chart patterns (Double Bottom, 20-day Breakout), balanced bullish vs bearish count |
+
+### Agent memory system
+
+Opt-in confidence calibration via `ENABLE_AGENT_MEMORY=1`. Stores past
+analysis results in `data/agent_memory/{ticker}.json`, backfills actual
+returns, and adjusts future confidence scores based on historical
+accuracy (> 0.6 → boost, < 0.4 → reduce).
 
 ## Strategies
 
