@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Daily market report generator for GitHub Actions.
+"""Market report generator for GitHub Actions.
 
-Determines which market triggered the run, checks if today is a trading day,
-runs market_review + technical_analyst on major indices (all rule-based, no LLM),
+Supports daily, weekly, and monthly report types.
+Runs market_review + technical_analyst on major indices (all rule-based, no LLM),
 generates a detailed report, and writes comment.md for the bot to post.
 
 Environment variables:
   REPORT_MARKET  — "cn", "hk", or "us"
+  REPORT_TYPE    — "daily", "weekly", or "monthly" (default: daily)
   REPORT_DATE    — optional override (YYYY-MM-DD), defaults to today
   NOTIFY_URLS    — Apprise URL for notification (optional)
 """
@@ -113,6 +114,12 @@ TICKER_NAMES = {
 TREND_EMOJI = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}
 SIGNAL_EMOJI = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}
 
+REPORT_TYPE_LABEL = {
+    "daily": ("日报", "Daily Report"),
+    "weekly": ("周报", "Weekly Report"),
+    "monthly": ("月报", "Monthly Report"),
+}
+
 
 def _fmt_change(pct: float) -> str:
     if pct >= 0:
@@ -120,12 +127,13 @@ def _fmt_change(pct: float) -> str:
     return f"{pct:.2f}%"
 
 
-def build_report(cfg: dict, report_date: str, analyst_signals: dict) -> str:
+def build_report(cfg: dict, report_date: str, analyst_signals: dict, report_type: str = "daily") -> str:
     """Build the full Markdown report from raw analyst signals."""
     lines: list[str] = []
     name_zh = cfg["name_zh"]
     name_en = cfg["name_en"]
     tickers = cfg["tickers"]
+    type_zh, type_en = REPORT_TYPE_LABEL.get(report_type, ("日报", "Daily Report"))
 
     # ── 1. Market Overview (from market_review_agent) ─────────────────────
     mr = analyst_signals.get("market_review_agent", {})
@@ -133,7 +141,7 @@ def build_report(cfg: dict, report_date: str, analyst_signals: dict) -> str:
     mr_signal = mr.get("signal", "neutral")
     mr_conf = mr.get("confidence", 0)
 
-    lines.append(f"## 📊 {name_zh} 日报 / {name_en} Daily Report — {report_date}\n")
+    lines.append(f"## 📊 {name_zh} {type_zh} / {name_en} {type_en} — {report_date}\n")
 
     # Overall signal
     lines.append(f"**大盘信号**: {SIGNAL_EMOJI.get(mr_signal, '⚪')} {mr_signal.upper()} (置信度 {mr_conf}%)\n")
@@ -243,11 +251,22 @@ def build_report(cfg: dict, report_date: str, analyst_signals: dict) -> str:
 
 def main() -> None:
     market = os.environ.get("REPORT_MARKET", "cn")
+    report_type = os.environ.get("REPORT_TYPE", "daily")
     if market not in MARKET_CONFIG:
         print(f"ERROR: Unknown market '{market}'", file=sys.stderr)
         sys.exit(1)
+    if report_type not in ("daily", "weekly", "monthly"):
+        print(f"ERROR: Unknown report type '{report_type}'", file=sys.stderr)
+        sys.exit(1)
 
     cfg = MARKET_CONFIG[market]
+
+    # Lookback based on report type
+    lookback = cfg["lookback_days"]
+    if report_type == "weekly":
+        lookback = max(lookback, 180)
+    elif report_type == "monthly":
+        lookback = max(lookback, 365)
 
     # Date range
     report_date_str = os.environ.get("REPORT_DATE")
@@ -256,14 +275,14 @@ def main() -> None:
     else:
         end_dt = datetime.now()
     end_date = end_dt.strftime("%Y-%m-%d")
-    start_date = (end_dt - timedelta(days=cfg["lookback_days"])).strftime("%Y-%m-%d")
+    start_date = (end_dt - timedelta(days=lookback)).strftime("%Y-%m-%d")
 
-    # Check trading day
+    # Check trading day (only skip for daily reports)
     from src.data.trading_calendar import get_trading_calendar
 
     cal = get_trading_calendar()
     today = end_dt.date()
-    if not cal.is_trading_day(today, market):
+    if report_type == "daily" and not cal.is_trading_day(today, market):
         print(f"SKIP: {today} is not a {market} trading day")
         with open("comment.md", "w") as f:
             f.write("<!-- skip -->\n")
@@ -312,7 +331,7 @@ def main() -> None:
 
     # Build report
     report_date = today.strftime("%Y-%m-%d")
-    comment = build_report(cfg, report_date, analyst_signals)
+    comment = build_report(cfg, report_date, analyst_signals, report_type)
 
     # Write outputs
     with open("result.json", "w") as f:
@@ -321,6 +340,7 @@ def main() -> None:
         f.write(comment)
 
     # Send notification
+    type_zh = REPORT_TYPE_LABEL.get(report_type, ("日报",))[0]
     notify_urls = os.environ.get("NOTIFY_URLS", "").strip()
     if notify_urls:
         from src.notifications import get_notification_manager, NotificationMessage
@@ -328,7 +348,7 @@ def main() -> None:
         nm = get_notification_manager()
         if nm.url_count > 0:
             msg = NotificationMessage(
-                title=f"{cfg['name_zh']} 日报 {report_date}",
+                title=f"{cfg['name_zh']} {type_zh} {report_date}",
                 body=comment,
             )
             nm.send(msg)

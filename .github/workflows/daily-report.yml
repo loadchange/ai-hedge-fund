@@ -1,6 +1,7 @@
 name: Daily Market Report
 
 # Runs on each trading day for CN / HK / US markets.
+# Also runs weekly (Saturday) and monthly (1st of month) reports.
 # 1. Creates a GitHub issue
 # 2. Runs market_review + technical_analyst on major indices
 # 3. Replies with dashboard Markdown
@@ -9,18 +10,37 @@ name: Daily Market Report
 
 on:
   schedule:
+    # ── Daily ──────────────────────────────────────────
     # CN market: 3:45 PM Beijing (07:45 UTC) on weekdays
     - cron: '45 7 * * 1-5'
     # HK market: 4:47 PM Hong Kong (08:47 UTC) on weekdays
     - cron: '47 8 * * 1-5'
-    # US market: 4:53 PM ET ≈ 21:53 UTC (covers both EST/EDT safely)
+    # US market: 4:53 PM ET ≈ 21:53 UTC on weekdays
     - cron: '53 21 * * 1-5'
+    # ── Weekly (Saturday, Beijing time) ─────────────────
+    # CN: 9:17 AM Beijing = 01:17 UTC Saturday
+    - cron: '17 1 * * 6'
+    # HK: 8:49 AM Beijing = 00:49 UTC Saturday
+    - cron: '49 0 * * 6'
+    # US: 7:37 AM Beijing = 23:37 UTC Friday
+    - cron: '37 23 * * 5'
+    # ── Monthly (1st of month, Beijing time) ────────────
+    # CN: 7:41 AM Beijing = 23:41 UTC previous day
+    - cron: '41 23 30-31 * *'
+    # HK: 8:32 AM Beijing = 00:32 UTC 1st
+    - cron: '32 0 1 * *'
+    # US: 9:33 AM Beijing = 01:33 UTC 1st
+    - cron: '33 1 1 * *'
   workflow_dispatch:
     inputs:
       market:
         description: 'Market: cn, hk, or us'
         required: false
         default: 'us'
+      report_type:
+        description: 'Report type: daily, weekly, or monthly'
+        required: false
+        default: 'daily'
       report_date:
         description: 'Date override (YYYY-MM-DD), leave empty for today'
         required: false
@@ -38,38 +58,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine market
-        id: market
+      - name: Determine market and report type
+        id: config
         run: |
           if [[ -n "${{ github.event.inputs.market }}" ]]; then
             echo "market=${{ github.event.inputs.market }}" >> "$GITHUB_OUTPUT"
+            echo "report_type=${{ github.event.inputs.report_type }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "45 7 * * 1-5")  echo "market=cn" >> "$GITHUB_OUTPUT" ;;
-              "47 8 * * 1-5")  echo "market=hk" >> "$GITHUB_OUTPUT" ;;
-              "53 21 * * 1-5") echo "market=us" >> "$GITHUB_OUTPUT" ;;
-              *)                echo "market=cn" >> "$GITHUB_OUTPUT" ;;
+              # Daily
+              "45 7 * * 1-5")   echo "market=cn" >> "$GITHUB_OUTPUT"; echo "report_type=daily" >> "$GITHUB_OUTPUT" ;;
+              "47 8 * * 1-5")   echo "market=hk" >> "$GITHUB_OUTPUT"; echo "report_type=daily" >> "$GITHUB_OUTPUT" ;;
+              "53 21 * * 1-5")  echo "market=us" >> "$GITHUB_OUTPUT"; echo "report_type=daily" >> "$GITHUB_OUTPUT" ;;
+              # Weekly
+              "17 1 * * 6")     echo "market=cn" >> "$GITHUB_OUTPUT"; echo "report_type=weekly" >> "$GITHUB_OUTPUT" ;;
+              "49 0 * * 6")     echo "market=hk" >> "$GITHUB_OUTPUT"; echo "report_type=weekly" >> "$GITHUB_OUTPUT" ;;
+              "37 23 * * 5")    echo "market=us" >> "$GITHUB_OUTPUT"; echo "report_type=weekly" >> "$GITHUB_OUTPUT" ;;
+              # Monthly
+              "41 23 30-31 * *") echo "market=cn" >> "$GITHUB_OUTPUT"; echo "report_type=monthly" >> "$GITHUB_OUTPUT" ;;
+              "32 0 1 * *")     echo "market=hk" >> "$GITHUB_OUTPUT"; echo "report_type=monthly" >> "$GITHUB_OUTPUT" ;;
+              "33 1 1 * *")     echo "market=us" >> "$GITHUB_OUTPUT"; echo "report_type=monthly" >> "$GITHUB_OUTPUT" ;;
+              *)                echo "market=cn" >> "$GITHUB_OUTPUT"; echo "report_type=daily" >> "$GITHUB_OUTPUT" ;;
             esac
           fi
 
       - name: Set market label
         id: label
         env:
-          MARKET: ${{ steps.market.outputs.market }}
+          MARKET: ${{ steps.config.outputs.market }}
+          TYPE: ${{ steps.config.outputs.report_type }}
         run: |
           case "$MARKET" in
             cn) echo "name=中国A股" >> "$GITHUB_OUTPUT"; echo "icon=🇨🇳" >> "$GITHUB_OUTPUT" ;;
             hk) echo "name=港股"   >> "$GITHUB_OUTPUT"; echo "icon=🇭🇰" >> "$GITHUB_OUTPUT" ;;
             us) echo "name=美股"   >> "$GITHUB_OUTPUT"; echo "icon=🇺🇸" >> "$GITHUB_OUTPUT" ;;
           esac
+          case "$TYPE" in
+            daily)   echo "type_zh=日报" >> "$GITHUB_OUTPUT"; echo "type_en=Daily Report" >> "$GITHUB_OUTPUT" ;;
+            weekly)  echo "type_zh=周报" >> "$GITHUB_OUTPUT"; echo "type_en=Weekly Report" >> "$GITHUB_OUTPUT" ;;
+            monthly) echo "type_zh=月报" >> "$GITHUB_OUTPUT"; echo "type_en=Monthly Report" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Create report issue
         id: issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MARKET: ${{ steps.market.outputs.market }}
+          MARKET: ${{ steps.config.outputs.market }}
           ICON: ${{ steps.label.outputs.icon }}
           NAME: ${{ steps.label.outputs.name }}
+          TYPE_ZH: ${{ steps.label.outputs.type_zh }}
           INPUT_DATE: ${{ github.event.inputs.report_date }}
         run: |
           if [[ -n "$INPUT_DATE" ]]; then
@@ -77,8 +114,8 @@ jobs:
           else
             report_date=$(date -u +%Y-%m-%d)
           fi
-          title="${ICON} ${NAME} 日报 / Daily Report — ${report_date}"
-          body="Automated daily market report for **${NAME}** (${report_date})."
+          title="${ICON} ${NAME} ${TYPE_ZH} — ${report_date}"
+          body="Automated ${TYPE_ZH} for **${NAME}** (${report_date})."
           issue_url=$(gh issue create --title "$title" --body "$body")
           issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
           echo "number=$issue_number" >> "$GITHUB_OUTPUT"
@@ -96,7 +133,8 @@ jobs:
 
       - name: Run market report
         env:
-          REPORT_MARKET: ${{ steps.market.outputs.market }}
+          REPORT_MARKET: ${{ steps.config.outputs.market }}
+          REPORT_TYPE: ${{ steps.config.outputs.report_type }}
           REPORT_DATE: ${{ github.event.inputs.report_date }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
@@ -119,9 +157,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE: ${{ steps.issue.outputs.number }}
+          TYPE_ZH: ${{ steps.label.outputs.type_zh }}
         run: |
           gh issue comment "$ISSUE" --body-file comment.md
-          gh issue close "$ISSUE" --comment "📊 日报已完成 / Daily report complete."
+          gh issue close "$ISSUE" --comment "📊 ${TYPE_ZH}已完成。"
 
       - name: Close issue (non-trading day)
         if: steps.skip.outputs.skip == 'true'
@@ -129,14 +168,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE: ${{ steps.issue.outputs.number }}
         run: |
-          gh issue close "$ISSUE" --comment "⏭️ 今日非交易日，跳过 / Not a trading day, skipped."
+          gh issue close "$ISSUE" --comment "⏭️ 今日非交易日，跳过。"
 
       - name: Upload artifacts
         if: always() && steps.skip.outputs.skip != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: daily-report-${{ steps.market.outputs.market }}-${{ github.run_id }}
+          name: report-${{ steps.config.outputs.market }}-${{ steps.config.outputs.report_type }}-${{ github.run_id }}
           if-no-files-found: ignore
           retention-days: 7
           path: |
